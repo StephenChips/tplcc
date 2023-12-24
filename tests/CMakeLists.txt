@@ -5,11 +5,14 @@ if(WIN32)
 	set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 endif()
 
-add_executable(tests-main "Test_Lexer.cpp")
+add_executable(tests-main
+	"../tcc/Lexer.cpp"
+	"../tcc/Lexer.h"
+	"Test_Lexer.cpp"
+)
 
 target_link_libraries(
   tests-main
-  parser-generator
   GTest::gtest_main
 )
 
