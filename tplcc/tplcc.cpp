@@ -1,7 +1,7 @@
 ﻿// tcc.cpp : Defines the entry point for the application.
 //
 
-#include "tcc.h"
+#include "tplcc.h"
 
 using namespace std;
 

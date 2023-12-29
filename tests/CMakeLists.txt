@@ -1,13 +1,15 @@
 find_package(GTest CONFIG REQUIRED)
 
+set(CMAKE_CXX_STANDARD 20)
+
 if(WIN32)
 	# For Windows: Prevent overriding the parent project's compiler/linker settings
 	set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 endif()
 
 add_executable(tests-main
-	"../tcc/Lexer.cpp"
-	"../tcc/Lexer.h"
+	"../tplcc/Lexer.cpp"
+	"../tplcc/Lexer.h"
 	"Test_Lexer.cpp"
 )
 

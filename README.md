@@ -1,3 +1,3 @@
 # TCC
 
-A **T**iny **C** **C**ompiler written in C++.
+A ***t**in **p**ot **l**ittle **C** **C**ompiler*.
