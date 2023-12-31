@@ -5,7 +5,6 @@
 #include <optional>
 #include <variant>
 #include <functional>
-#include <concepts>
 
 #include "./Lexer.h"
 
@@ -148,7 +147,7 @@ namespace {
 
 			for (size_t j = 0; j < availableSuffixes.size(); j++) {
 				if (hasSeenSuffix[j]) {
-					errOut.reportsError(std::make_unique<InvalidNumberSuffix>());
+					reportsError<InvalidNumberSuffix>(errOut);
 					return false;
 				}
 
@@ -159,7 +158,7 @@ namespace {
 					continue;
 				}
 
-				errOut.reportsError(std::make_unique<InvalidNumberSuffix>());
+				reportsError<InvalidNumberSuffix>(errOut);
 				return false;
 			}
 		}
@@ -192,7 +191,7 @@ namespace {
 
 		if (exponentHasNoDigit) {
 			while (std::isalnum(is.peek())) buffer.push_back(is.get());
-			errOut.reportsError(std::make_unique<ExponentHasNoDigit>());
+			reportsError<ExponentHasNoDigit>(errOut);
 			return false;
 		}
 		else {
@@ -250,7 +249,7 @@ namespace {
 				numberBase != LiteralNumberBase::Hexadecimal && 
 				std::any_of(buffer.begin(), buffer.end(), std::not_fn(isOctalDigit))
 			) {
-				errOut.reportsError(std::make_unique<InvalidOctalNumber>());
+				reportsError<InvalidOctalNumber>(errOut);
 				return std::nullopt;
 			}
 
@@ -278,7 +277,7 @@ namespace {
 		if (!hasIntegerPart && !hasFractionPart) {
 			// invalid case e.g. .e10f, .ll, .ace.
 			while (std::isalnum(is.peek())) is.get();
-			errOut.reportsError(std::make_unique<InvalidNumber>());
+			reportsError<InvalidNumber>(errOut);
 			return std::nullopt;
 		}
 
@@ -286,7 +285,7 @@ namespace {
 
 		if (numberBase == LiteralNumberBase::Hexadecimal && !hasExponentPart) {
 			while (std::isalnum(is.peek())) buffer.push_back(is.get());
-			errOut.reportsError(std::make_unique<HexFloatHasNoExponent>());
+			reportsError<HexFloatHasNoExponent>(errOut);
 			return std::nullopt;
 		}
 

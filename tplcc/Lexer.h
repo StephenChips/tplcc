@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <variant>
+#include <concepts>
 
 struct Ident {
 	std::string str;
@@ -14,7 +15,7 @@ struct Ident {
 	bool operator==(const Ident&) const = default;
 };
 
-// The type of a number literal without a type suffix is uncurtain
+// The type of a number literal without a type suffix is uncertain
 // until we've parsed the expression surrounds it. for example:
 // 
 // ``` c
@@ -22,8 +23,8 @@ struct Ident {
 // int b = 128 * a; 
 // ```
 // 
-// Because the variable "a" is a "char", the literal should be deduce to a "char" type too,
-// and the whole expression will overflow even if we will assign it to a larger type "int" later.
+// Because the variable "a" is a "char", the literal should be a "char" too, and the 
+// whole expression should overflow even though we assign it to a larger type "int" later.
 // We cannot know what type the literal "128" is until we've parsed the whole expression.
 // So instead converting the string to a number here, it is better to store the string we've parsed
 // and let the parser to convert it to any type it needs.
@@ -85,6 +86,7 @@ public:
 	Error() = default;
 	virtual ~Error() = default;
 };
+
 class InvalidNumberSuffix: public Error {};
 class ExponentHasNoDigit: public Error {};
 class HexFloatHasNoExponent: public Error {};
@@ -95,6 +97,11 @@ struct IReportError {
 	virtual void reportsError(std::unique_ptr<Error> error) = 0;
 	virtual ~IReportError() = default;
 };
+
+template<typename T, typename... Args>
+void reportsError(IReportError& errOut, Args&&... args) {
+	errOut.reportsError(std::make_unique<T>(std::forward(args)...));
+}
 
 class Lexer {
 private:
