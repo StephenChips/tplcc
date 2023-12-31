@@ -4,9 +4,10 @@
 #include <utility>
 #include <optional>
 #include <variant>
+#include <functional>
+#include <concepts>
 
 #include "./Lexer.h"
-
 
 namespace {
 	static const std::vector<std::string> UNSIGNED_INT_SUFFIX{
@@ -109,57 +110,224 @@ namespace {
 			return ch == 'e' || ch == 'E';
 		}
 		else {
-			// Otherwise it must be a hexadecimal number, since any octal number in c can only be an integer.
+			// Otherwise it must be a hexadecimal number, since any C octal number can only be an integer.
 			return ch == 'p' || ch == 'P';
 		}
 	}
+	
+	class NumberLiteralScanner {
+		std::string buffer;
+		std::istream& is;
+		IReportError &errOut;
+		std::vector<std::unique_ptr<Error>> listOfErrors; 
+
+	public:
+		NumberLiteralScanner(std::istream& is, IReportError& errOut) : is(is), errOut(errOut) {};
+		std::optional<NumberLiteral> scan();
+	private:
+		
+		// Following functions will return false if they find errors when scanning.
+		bool scanSuffixes(std::initializer_list<const std::vector<std::string>*> availableSuffixes);
+		bool scanIntegerSuffixes();
+		bool scanDoubleAndFloatSuffixes();
+		bool scanExponentPart();
+		std::optional<NumberLiteral> scanAndCreateIntegerLiteral();
+		std::optional<NumberLiteral> scanAndCreateFloatLiteral(bool hasExponentPart);
+	};
+
+	bool NumberLiteralScanner::scanSuffixes(std::initializer_list<const std::vector<std::string>*> availableSuffixes) {
+		std::vector<bool> hasSeenSuffix(availableSuffixes.size(), false);
+
+		size_t beginIndexOfSuffix = buffer.size();
+		while (std::isalpha(is.peek())) {
+			buffer.push_back(is.get());
+		}
+
+		for (size_t i = beginIndexOfSuffix; i < buffer.size();) {
+			const std::string* matched = nullptr;
+
+			for (size_t j = 0; j < availableSuffixes.size(); j++) {
+				if (hasSeenSuffix[j]) {
+					errOut.reportsError(std::make_unique<InvalidNumberSuffix>());
+					return false;
+				}
+
+				auto& vecOfSuffixes = **(availableSuffixes.begin() + j);
+				if (const auto matched = matchesSuffix(buffer, i, vecOfSuffixes)) {
+					hasSeenSuffix[j] = true;
+					i += matched->size();
+					continue;
+				}
+
+				errOut.reportsError(std::make_unique<InvalidNumberSuffix>());
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	bool NumberLiteralScanner::scanIntegerSuffixes() {
+		return scanSuffixes({ &UNSIGNED_INT_SUFFIX, &LONG_INT_SUFFIX });
+	}
+
+	bool NumberLiteralScanner::scanDoubleAndFloatSuffixes() {
+		return scanSuffixes({ &TYPE_FLOAT_AND_DOUBLE_SUFFIX });
+	}
+
+	bool NumberLiteralScanner::scanExponentPart()
+	{
+		bool exponentHasNoDigit = true;
+
+		buffer.push_back(is.get()); // read the 'e'/'E'/'p'/'P' at the beginning
+
+		if (is.peek() == '+' || is.peek() == '-') {
+			buffer.push_back(is.get());
+		}
+
+		while (std::isdigit(is.peek())) {
+			buffer.push_back(is.get());
+			exponentHasNoDigit = false;
+		}
+
+		if (exponentHasNoDigit) {
+			while (std::isalnum(is.peek())) buffer.push_back(is.get());
+			errOut.reportsError(std::make_unique<ExponentHasNoDigit>());
+			return false;
+		}
+		else {
+			return true;
+		}
+	}
+
+	std::optional<NumberLiteral> NumberLiteralScanner::scanAndCreateIntegerLiteral() {
+		if (bool hasError = !scanIntegerSuffixes()) return std::nullopt;
+		return NumberLiteral{ std::move(buffer) };
+	}
+
+	std::optional<NumberLiteral> NumberLiteralScanner::scanAndCreateFloatLiteral(bool hasExponentPart) {
+		if (hasExponentPart && !scanExponentPart()) return std::nullopt;
+		if (!scanDoubleAndFloatSuffixes()) return std::nullopt;
+		return NumberLiteral{ std::move(buffer) };
+	}
+
+	// The number first set of a c-number is {'0' - '9'} ï¿½ï¿½ {'.'}. This function should only be called when current
+	// `is.peek()` is one of the characters in the first set.
+	std::optional<NumberLiteral> NumberLiteralScanner::scan() {
+		bool hasIntegerPart = false;
+		bool hasFractionPart = false;
+		auto numberBase = LiteralNumberBase::Decimal;
+
+		buffer.clear();
+
+		// Exam if it's a hexadecimal number.
+		if (is.peek() == '0') {
+			buffer.push_back(is.get());
+
+			if (is.peek() == 'x' || is.peek() == 'X') {
+				buffer.push_back(is.get());
+				numberBase = LiteralNumberBase::Hexadecimal;
+			}
+		}
+
+		// We don't know if a number is octal even if the first character is zero.
+		// It could be a decimal floating point number, in case it has a fraction part. 
+		// e.g. 0987.654 is a valid number. We should keep scanning digits until we
+		// meet a non-digit, then we can drop a conclusion.
+
+		while (isValidDigit(is.peek(), numberBase)) {
+			buffer.push_back(is.get());
+			hasIntegerPart = true;
+		}
+
+		// This branch handles literals that only have the integer part.
+		if (is.peek() != '.') {
+			if (isFirstCharOfExponentPart(is.peek(), numberBase)) {
+				return scanAndCreateFloatLiteral(true);
+			}
+
+			if (buffer[0] == '0' && 
+				numberBase != LiteralNumberBase::Hexadecimal && 
+				std::any_of(buffer.begin(), buffer.end(), std::not_fn(isOctalDigit))
+			) {
+				errOut.reportsError(std::make_unique<InvalidOctalNumber>());
+				return std::nullopt;
+			}
+
+			return scanAndCreateIntegerLiteral();
+		}
+
+		// Following code handles following two cases:
+		// 
+		// 1. !hasIntegerPart && is.peek() == '.', e.g. .33e10f
+		// 2. hasIntegerPart && is.peek() == '.', e.g. 100.33e10f
+		//
+		// The case (!hasIntegerPart && is.peek() != '.') is impossible. If a number doesn't
+		// have an integer part, its first character must be a decimal point '.', otherwise we
+		// we call the function even when the current character isn't a digit nor a '.',
+		// which is garentee not gonna happen.
+
+		buffer.push_back(is.get()); // read the decimal point
+
+		// Read the fraction part.
+		while (isValidDigit(is.peek(), numberBase)) {
+			buffer.push_back(is.get());
+			hasFractionPart = true;
+		}
+
+		if (!hasIntegerPart && !hasFractionPart) {
+			// invalid case e.g. .e10f, .ll, .ace.
+			while (std::isalnum(is.peek())) is.get();
+			errOut.reportsError(std::make_unique<InvalidNumber>());
+			return std::nullopt;
+		}
+
+		const bool hasExponentPart = isFirstCharOfExponentPart(is.peek(), numberBase);
+
+		if (numberBase == LiteralNumberBase::Hexadecimal && !hasExponentPart) {
+			while (std::isalnum(is.peek())) buffer.push_back(is.get());
+			errOut.reportsError(std::make_unique<HexFloatHasNoExponent>());
+			return std::nullopt;
+		}
+
+		return hasFractionPart || hasExponentPart
+			? scanAndCreateFloatLiteral(hasExponentPart)
+			: scanAndCreateIntegerLiteral();
+	}
 }
 
-/// <summary>
-/// Get the next token from given input stream.
-/// </summary>
-/// <param name="is"></param>
-/// <returns></returns>
-std::variant<Token, LexerError> Lexer::next(std::istream& is)
+// Get the next token from given input stream.
+std::optional<Token> Lexer::next()
 {
-	if (std::isalpha(is.peek()) || is.peek() == '_') {
-		readIdentifierString(is);
+	while (std::isblank(is.peek())) is.ignore();
 
-		auto result = findKeyword(buffer);
-		if (result) keyword = *result;
-		return result ? TokenKind::Keyword : TokenKind::Ident;
+	if (std::isalpha(is.peek()) || is.peek() == '_') {
+		auto buffer = readIdentString();
+
+		if (auto result = findKeyword(buffer)) {
+			return *result;
+		}
+		else {
+			return Ident{ std::move(buffer) };
+		}
 	}
 	else if (std::isdigit(is.peek()) || is.peek() == '.') {
-		if (auto err = readNumber(is)) return *err;
-		else return TokenKind::NumberLiteral;
+		return NumberLiteralScanner(is, errOut).scan();
 	}
 	else {
-		return character = is.get();
+		return (char) is.get();
 	}
 }
 
-char Lexer::getCharacter()
+std::string Lexer::readIdentString()
 {
-	return character;
-}
-
-std::string Lexer::getIdentStr()
-{
-	return buffer;
-}
-
-Keyword Lexer::getKeyword()
-{
-	return keyword;
-}
-
-void Lexer::readIdentifierString(std::istream& is)
-{
-	buffer.clear();
+	std::string buffer;
 
 	while (std::isdigit(is.peek()) || std::isalpha(is.peek()) || is.peek() == '_') {
 		buffer.push_back(is.get());
 	}
+
+	return buffer;
 }
 
 std::optional<Keyword> Lexer::findKeyword(const std::string& str)
@@ -178,162 +346,4 @@ std::optional<Keyword> Lexer::findKeyword(const std::string& str)
 	else {
 		return {};
 	}
-}
-
-
-std::optional<LexerError> Lexer::scanSuffixes(std::istream& is, std::initializer_list<const std::vector<std::string>*> availableSuffixes) {
-	std::vector<bool> hasSeenSuffix(availableSuffixes.size(), false);
-
-	size_t beginIndexOfSuffix = buffer.size();
-	while (std::isalpha(is.peek())) {
-		buffer.push_back(is.get());
-	}
-
-	for (size_t i = beginIndexOfSuffix; i < buffer.size();) {
-		const std::string* matched = nullptr;
-
-		for (size_t j = 0; j < availableSuffixes.size(); j++) {
-			if (hasSeenSuffix[j]) {
-				return LexerError{ LexerError::INVALID_NUMBER_SUFFIX };
-			}
-
-			auto& vecOfSuffixes = **(availableSuffixes.begin() + j);
-			if (const auto matched = matchesSuffix(buffer, i, vecOfSuffixes)) {
-				hasSeenSuffix[j] = true;
-				i += matched->size();
-				continue;
-			}
-
-			return LexerError{ LexerError::INVALID_NUMBER_SUFFIX };
-		}
-	}
-
-	return std::nullopt;
-}
-
-std::optional<LexerError> Lexer::scanIntegerSuffixes(std::istream& is) {
-	return scanSuffixes(is, { &UNSIGNED_INT_SUFFIX, &LONG_INT_SUFFIX });
-}
-
-std::optional<LexerError> Lexer::scanDoubleAndFloatSuffixes(std::istream& is) {
-	return scanSuffixes(is, { &TYPE_FLOAT_AND_DOUBLE_SUFFIX });
-}
-
-std::optional<LexerError> Lexer::scanExponentPart(std::istream& is) {
-	bool exponentHasNoDigit = true;
-
-	buffer.push_back(is.get()); // read the 'e'/'E'/'p'/'P' at the beginning
-
-	if (is.peek() == '+' || is.peek() == '-') {
-		buffer.push_back(is.get());
-	}
-
-	while (std::isdigit(is.peek())) {
-		buffer.push_back(is.get());
-		exponentHasNoDigit = false;
-	}
-
-	if (exponentHasNoDigit) {
-		while (std::isalnum(is.peek())) buffer.push_back(is.get());
-		return LexerError{ LexerError::EXPONENT_HAS_NO_DIGIT };
-	}
-	else {
-		return {};
-	}
-}
-
-// The number first set of a c-number is {'0' - '9'} ¡É {'.'}. This function should only be called when current
-// `is.peek()` is one of the characters in the first set.
-std::optional<LexerError> Lexer::readNumber(std::istream& is) {
-	bool hasIntegerPart = false;
-	bool hasFractionPart = false;
-	LiteralNumberBase numberBase = LiteralNumberBase::Decimal;
-
-	buffer.clear();
-
-	// Exam if it's a hexadecimal number.
-	if (is.peek() == '0') {
-		buffer.push_back(is.get());
-
-		if (is.peek() == 'x' || is.peek() == 'X') {
-			buffer.push_back(is.get());
-			numberBase = LiteralNumberBase::Hexadecimal;
-		}
-	}
-
-	// We cannot know if a number is octal even if the first character is zero.
-	// It could be a decimal floating point number, in case it has a fraction part. 
-	// e.g. 0987.654 is a valid number. We should keep scanning digits until we
-	// meet a non-digit, then we can drop a conclusion.
-
-	while (isValidDigit(is.peek(), numberBase)) {
-		buffer.push_back(is.get());
-		hasIntegerPart = true;
-	}
-
-	// If we can enter this if branch, the number must have an integer part.
-	// (but not necessarily have a fraction part).
-	// We needn't add the condition `hasIntegerPart` to ensure that.
-	if (is.peek() != '.') {
-		if (buffer[0] == '0' && numberBase != LiteralNumberBase::Hexadecimal) {
-			if (std::all_of(buffer.begin(), buffer.end(), isOctalDigit)) {
-				numberBase = LiteralNumberBase::Octal;
-				return scanIntegerSuffixes(is);
-			}
-			else {
-				return LexerError{ LexerError::INVALID_OCTAL_NUMBER };
-			}
-		}
-		else if (isFirstCharOfExponentPart(is.peek(), numberBase)) {
-			if (auto e = scanExponentPart(is)) return e;
-			return scanDoubleAndFloatSuffixes(is);
-		}
-		else {
-			return scanIntegerSuffixes(is);
-		}
-
-	}
-
-	// Following code handles following two cases:
-	// 
-	// 1. !hasIntegerPart && is.peek() == '.', e.g. .33e10f
-	// 2. hasIntegerPart && is.peek() == '.', e.g. 100.33e10f
-	//
-	// Case !hasIntegerPart && is.peek() != '.' is impossible. Because if a number doesn't
-	// have an integer part, its first character must be a decimal point '.'. If it weren't
-	// that means we've called the function even when the current character isn't a digit nor a
-	// decimal point, which is garentee won't going to happen.
-
-	buffer.push_back(is.get()); // read the decimal point
-
-	// Read the fraction part.
-	while (isValidDigit(is.peek(), numberBase)) {
-		buffer.push_back(is.get());
-		hasFractionPart = true;
-	}
-
-	// It is a floating point number as long as it has a fraction part.
-	if (hasFractionPart || hasIntegerPart) {
-		if (isFirstCharOfExponentPart(is.peek(), numberBase)) {
-			if (auto e = scanExponentPart(is)) return e;
-			return scanDoubleAndFloatSuffixes(is);
-		}
-		else if (numberBase == LiteralNumberBase::Hexadecimal) {
-			while (std::isalnum(is.peek())) buffer.push_back(is.get());
-			return LexerError{ LexerError::HEX_FLOAT_HAS_NO_EXPONENT };
-		}
-		else {
-			return scanDoubleAndFloatSuffixes(is);
-		}
-	}
-	else {
-		// !hasIntegerPart && !hasFractionPart
-		// invalid case e.g. .e10f, .ll, .ace.
-		while (std::isalnum(is.peek())) is.get();
-		return LexerError{ LexerError::INVALID_NUMBER };
-	}
-}
-
-std::string Lexer::getNumLiteralStr() {
-	return buffer;
 }

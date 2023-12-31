@@ -3,6 +3,14 @@
 #include <gtest/gtest.h>
 #include "../tplcc/Lexer.h"
 
+struct ReportErrorStub : IReportError {
+	std::vector<std::unique_ptr<Error>> listOfErrors{};
+
+	void reportsError(std::unique_ptr<Error> error) override {
+		listOfErrors.push_back(std::move(error));
+	}
+};
+
 TEST(Test_Lexer, test_keyword) {
 	std::vector<std::string> keywordNames{
 		"static",
@@ -20,11 +28,11 @@ TEST(Test_Lexer, test_keyword) {
 
 	for (size_t i = 0; i < keywordNames.size(); i++) {
 		std::stringstream ss(keywordNames[i] + "    ");
+		ReportErrorStub stub;
 
-		Lexer lexer;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<Token>(lexer.next(ss)), TokenKind::Keyword);
-		EXPECT_EQ(lexer.getKeyword(), keywordValues[i]);
+		EXPECT_EQ(std::get<Keyword>(*lexer.next()), keywordValues[i]);
 		EXPECT_EQ(ss.tellg(), keywordNames[i].size());
 	}
 
@@ -41,10 +49,10 @@ TEST(TestLexer, test_identifier) {
 	for (const auto& id : identifiers) {
 		std::stringstream ss(id + "    ");
 
-		Lexer lexer;
+		ReportErrorStub stub;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<Token>(lexer.next(ss)), TokenKind::Ident);
-		EXPECT_EQ(lexer.getIdentStr(), id);
+		EXPECT_EQ(std::get<Ident>(*lexer.next()), Ident { id });
 		EXPECT_EQ(ss.tellg(), id.size());
 	}
 }
@@ -61,11 +69,10 @@ TEST(TestLexer, test_integer) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		std::stringstream ss(literals[i] + "    ");
-		Lexer lexer;
+		ReportErrorStub stub;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<Token>(lexer.next(ss)), TokenKind::NumberLiteral);
-		EXPECT_EQ(lexer.getNumLiteralStr(), literals[i]);
-		EXPECT_EQ(ss.tellg(), literals[i].size());
+		EXPECT_EQ(std::get<NumberLiteral>(*lexer.next()), NumberLiteral{ literals[i]});
 	}
 }
 
@@ -85,11 +92,10 @@ TEST(TestLexer, test_decimal_floating_numbers) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		std::stringstream ss(literals[i] + "    ");
-		Lexer lexer;
+		ReportErrorStub stub;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<Token>(lexer.next(ss)), TokenKind::NumberLiteral);
-		EXPECT_EQ(lexer.getNumLiteralStr(), literals[i]);
-		EXPECT_EQ(ss.tellg(), literals[i].size());
+		EXPECT_EQ(std::get<NumberLiteral>(*lexer.next()), NumberLiteral{ literals[i] });
 	}
 }
 
@@ -108,11 +114,10 @@ TEST(TestLexer, test_hexadecimal_floating_numbers) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		std::stringstream ss(literals[i] + "    ");
-		Lexer lexer;
+		ReportErrorStub stub;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<Token>(lexer.next(ss)), TokenKind::NumberLiteral);
-		EXPECT_EQ(lexer.getNumLiteralStr(), literals[i]);
-		EXPECT_EQ(ss.tellg(), literals[i].size());
+		EXPECT_EQ(std::get<NumberLiteral>(*lexer.next()), NumberLiteral{ literals[i] });
 	}
 }
 
@@ -126,9 +131,12 @@ TEST(TestLexer, test_lexer_error_invalid_number_suffix) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		std::stringstream ss(literals[i] + "    ");
-		Lexer lexer;
+		ReportErrorStub stub;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<LexerError>(lexer.next(ss)), LexerError { LexerError::INVALID_NUMBER_SUFFIX });
+		EXPECT_EQ(lexer.next(), std::nullopt);
+		EXPECT_EQ(stub.listOfErrors.size(), 1);
+		EXPECT_TRUE(dynamic_cast<InvalidNumberSuffix *>(&(*stub.listOfErrors.front())) != nullptr);
 		EXPECT_EQ(ss.tellg(), literals[i].size());
 	}
 }
@@ -142,9 +150,12 @@ TEST(TestLexer, test_lexer_error_exponent_has_no_digit) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		std::stringstream ss(literals[i] + "    ");
-		Lexer lexer;
+		ReportErrorStub stub;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<LexerError>(lexer.next(ss)), LexerError{ LexerError::EXPONENT_HAS_NO_DIGIT });
+		EXPECT_EQ(lexer.next(), std::nullopt);
+		EXPECT_EQ(stub.listOfErrors.size(), 1);
+		EXPECT_TRUE(dynamic_cast<ExponentHasNoDigit*>(&(*stub.listOfErrors.front())) != nullptr);
 		EXPECT_EQ(ss.tellg(), literals[i].size());
 	}
 }
@@ -158,9 +169,12 @@ TEST(TestLexer, test_lexer_error_hex_float_has_no_exponent) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		std::stringstream ss(literals[i] + "    ");
-		Lexer lexer;
+		ReportErrorStub stub;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<LexerError>(lexer.next(ss)), LexerError{ LexerError::HEX_FLOAT_HAS_NO_EXPONENT });
+		EXPECT_EQ(lexer.next(), std::nullopt);
+		EXPECT_EQ(stub.listOfErrors.size(), 1);
+		EXPECT_TRUE(dynamic_cast<HexFloatHasNoExponent *>(&(*stub.listOfErrors.front())) != nullptr);
 		EXPECT_EQ(ss.tellg(), literals[i].size());
 	}
 }
@@ -174,9 +188,12 @@ TEST(TestLexer, test_lexer_error_invalid_number) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		std::stringstream ss(literals[i] + "    ");
-		Lexer lexer;
+		ReportErrorStub stub;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<LexerError>(lexer.next(ss)), LexerError{ LexerError::INVALID_NUMBER });
+		EXPECT_EQ(lexer.next(), std::nullopt);
+		EXPECT_EQ(stub.listOfErrors.size(), 1);
+		EXPECT_TRUE(dynamic_cast<InvalidNumber*>(&(*stub.listOfErrors.front())) != nullptr);
 		EXPECT_EQ(ss.tellg(), literals[i].size());
 	}
 }
@@ -189,9 +206,12 @@ TEST(TestLexer, test_lexer_error_invalid_octal_number) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		std::stringstream ss(literals[i] + "    ");
-		Lexer lexer;
+		ReportErrorStub stub;
+		Lexer lexer(ss, stub);
 
-		EXPECT_EQ(std::get<LexerError>(lexer.next(ss)), LexerError{ LexerError::INVALID_OCTAL_NUMBER });
+		EXPECT_EQ(lexer.next(), std::nullopt);
+		EXPECT_EQ(stub.listOfErrors.size(), 1);
+		EXPECT_TRUE(dynamic_cast<InvalidOctalNumber*>(&(*stub.listOfErrors.front())) != nullptr);
 		EXPECT_EQ(ss.tellg(), literals[i].size());
 	}
 }
@@ -199,10 +219,11 @@ TEST(TestLexer, test_lexer_error_invalid_octal_number) {
 TEST(TestLexer, test_character) {
 	const std::string characters{ "{=+-*" };
 	std::stringstream ss(characters);
-	Lexer lexer;
+	
+	ReportErrorStub stub;
+	Lexer lexer(ss, stub);
 
 	for (const char& ch : characters) {
-		EXPECT_EQ(std::get<Token>(lexer.next(ss)), ch);
-		EXPECT_EQ(lexer.getCharacter(), ch);
+		EXPECT_EQ(std::get<char>(*lexer.next()), ch);
 	}
 }
