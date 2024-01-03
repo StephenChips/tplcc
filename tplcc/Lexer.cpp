@@ -293,6 +293,18 @@ namespace {
 			? scanAndCreateFloatLiteral(hasExponentPart)
 			: scanAndCreateIntegerLiteral();
 	}
+
+	bool isWhitespace(const char ch) {
+		return ch == ' '
+			|| ch == '\t'
+			|| ch == '\r'
+			|| ch == '\n'
+			|| ch == '\r'
+			|| ch == '\v'
+			|| ch == '\f'
+			|| ch == '\a'
+			|| ch == '\b';
+	}
 }
 
 constexpr bool isStringLiteralPrefix(const std::string& prefix) {
@@ -361,7 +373,24 @@ std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string
 // Get the next token from given input stream.
 std::optional<Token> Lexer::next()
 {
-	while (std::isblank(input.peek())) input.ignore();
+	while (isWhitespace(input.peek())) input.ignore();
+
+	if (input.eof()) return EOI;
+
+	if (input.peekN(2) == std::vector<int>{'/', '/'}) {
+		input.ignore();
+		while (!input.eof() && input.peek() != '\n') input.ignore();
+		input.ignore();
+		return next();
+	}
+
+	if (input.peekN(2) == std::vector<int>{'/', '*'}) {
+		input.ignoreN(2);
+		std::vector<int> endOfComment{ '*', '/' };
+		while (!input.eof() && input.peekN(2) != endOfComment) input.ignore();
+		input.ignoreN(2);
+		return next();
+	}
 
 	if (std::isalpha(input.peek()) || input.peek() == '_') {
 		auto buffer = readIdentString();

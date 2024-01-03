@@ -93,13 +93,20 @@ enum class Keyword {
 	While
 };
 
+struct EndOfInput {
+	bool operator==(const EndOfInput& other) const = default;
+};
+
+constexpr const EndOfInput EOI;
+
 using Token = std::variant<
 	Ident,
 	NumberLiteral,
 	StringLiteral,
 	CharacterLiteral,
 	Keyword,
-	char
+	char,
+	EndOfInput
 >;
 
 class IErrorOutputItem {
@@ -130,6 +137,7 @@ struct ILexerInput {
 	virtual int peek() = 0;
 	virtual std::vector<int> peekN(size_t n) = 0;
 	virtual void ignore() = 0;
+	virtual void ignoreN(size_t n) = 0;
 	virtual bool eof() = 0;
 	virtual size_t numberOfConsumedChars() = 0;
 	virtual ~ILexerInput() = default;

@@ -3,6 +3,16 @@
 #include <gtest/gtest.h>
 #include "../tplcc/Lexer.h"
 
+template<typename T>
+static bool operator==(const Token& token, const T& literal) {
+	if (auto lit = std::get_if<T>(&token)) {
+		return *lit == literal;
+	}
+	else {
+		return false;
+	}
+}
+
 struct ReportErrorStub : IReportError {
 	std::vector<std::unique_ptr<IErrorOutputItem>> listOfErrors{};
 
@@ -11,10 +21,17 @@ struct ReportErrorStub : IReportError {
 	}
 };
 
-class DummyStringLexerInput : public ILexerInput {
-	std::string inputStr;
+struct DummyStringLexerInput : ILexerInput {
+	std::string inputStr = "";
 	size_t cursor = 0;
-public:
+
+	DummyStringLexerInput() {};
+
+	void resetInput(std::string input) {
+		inputStr = std::move(input);
+		cursor = 0;
+	}
+
 	DummyStringLexerInput(std::string inputStr): inputStr(std::move(inputStr)) {}
 	int get() override {
 		return eof() ? EOF : inputStr[cursor++];
@@ -36,6 +53,11 @@ public:
 	}
 	void ignore() override {
 		if (!eof()) cursor++;
+	}
+	void ignoreN(size_t n) override {
+		for (size_t i = 0; !eof() && i < n; i++) {
+			cursor++;
+		}
 	}
 	bool eof() override {
 		return cursor == inputStr.size();
@@ -385,6 +407,15 @@ static std::string fromUTF32(std::u32string&& s) {
 	return std::string(s.begin(), s.end());
 }
 
+class TestComment : public testing::Test {
+protected:
+	DummyStringLexerInput il;
+	ReportErrorStub errOut;
+	Lexer lexer;
+
+	TestComment() : lexer(il, errOut) {}
+};
+
 TEST(TestLexer, test_string_literal) {
 	using namespace std::string_literals;
 
@@ -499,4 +530,67 @@ TEST(TestLexer, test_character_literal) {
 	testCharacterLiteral("'0x7777777'", "0x7777777", CharSequenceLiteralPrefix::None);
 	// invalid escaping
 	testCharacterLiteral("'\\xaj'", "\\xaj", CharSequenceLiteralPrefix::None);
+}
+
+TEST_F(TestComment, testSingleLineComment) {
+	il.resetInput("// hello, world.         ");
+
+	EXPECT_EQ(*lexer.next(), EOI);
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+}
+
+TEST_F(TestComment, testSingleLineCommentFollowsAToken) {
+	il.resetInput("313 // THIS IS A INTEGER");
+
+	EXPECT_EQ(*lexer.next(), NumberLiteral{ "313" });
+	EXPECT_EQ(*lexer.next(), EOI);
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+}
+
+TEST_F(TestComment, commented_out_tokens_is_ignored) {
+	il.resetInput("// foo = 313");
+	EXPECT_EQ(*lexer.next(), EOI);
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+
+	il.resetInput("/* foo = 313 */");
+	EXPECT_EQ(*lexer.next(), EOI);
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+}
+
+TEST_F(TestComment, token_at_the_next_line_of_the_single_line_comment_should_be_scanned) {
+	il.resetInput(
+		"//INT\r\n"
+		"313\r\n"
+	);
+
+	EXPECT_EQ(*lexer.next(), NumberLiteral{"313"});
+	EXPECT_EQ(*lexer.next(), EOI);
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+}
+
+TEST_F(TestComment, test_comment) {
+	il.resetInput("/* comment */  ");
+
+	EXPECT_EQ(*lexer.next(), EOI);
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+}
+
+TEST_F(TestComment, test_comment_surrounded_by_tokens) {
+	il.resetInput("313 /* comment */ foo   ");
+
+	EXPECT_EQ(*lexer.next(), NumberLiteral{ "313" });
+	EXPECT_EQ(*lexer.next(), Ident{ "foo" });
+	EXPECT_EQ(*lexer.next(), EOI);
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+}
+
+TEST_F(TestComment, test_comment_spans_across_multiple_lines) {
+	il.resetInput("313 /* <- A INT \r\n A IDENTIFIER -> */ foo   ");
+
+	EXPECT_EQ(*lexer.next(), NumberLiteral{ "313" });
+	EXPECT_EQ(*lexer.next(), Ident{ "foo" });
+	EXPECT_EQ(*lexer.next(), EOI);
+	EXPECT_TRUE(errOut.listOfErrors.empty());
 }
