@@ -293,18 +293,6 @@ namespace {
 			? scanAndCreateFloatLiteral(hasExponentPart)
 			: scanAndCreateIntegerLiteral();
 	}
-
-	bool isWhitespace(const char ch) {
-		return ch == ' '
-			|| ch == '\t'
-			|| ch == '\r'
-			|| ch == '\n'
-			|| ch == '\r'
-			|| ch == '\v'
-			|| ch == '\f'
-			|| ch == '\a'
-			|| ch == '\b';
-	}
 }
 
 constexpr bool isStringLiteralPrefix(const std::string& prefix) {
@@ -373,12 +361,12 @@ std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string
 // Get the next token from given input stream.
 std::optional<Token> Lexer::next()
 {
-	while (isWhitespace(input.peek())) input.ignore();
+	while (std::isspace(input.peek())) input.ignore();
 
 	if (input.eof()) return EOI;
 
 	if (input.peekN(2) == std::vector<int>{'/', '/'}) {
-		input.ignore();
+		input.ignoreN(2);
 		while (!input.eof() && input.peek() != '\n') input.ignore();
 		input.ignore();
 		return next();
