@@ -9,6 +9,11 @@
 #include <variant>
 #include <concepts>
 
+struct Punctuator {
+	std::string str;
+	bool operator==(const Punctuator&) const = default;
+};
+
 struct Ident {
 	std::string str;
 	bool operator==(const Ident&) const = default;
@@ -100,6 +105,7 @@ struct EndOfInput {
 constexpr const EndOfInput EOI;
 
 using Token = std::variant<
+	Punctuator,
 	Ident,
 	NumberLiteral,
 	StringLiteral,
@@ -125,6 +131,7 @@ class StringInvalidEscape : public IErrorOutputItem {};
 class HexEscapeSequenceOutOfRange : public IErrorOutputItem {};
 class InvalidStringOrCharacterPrefix : public IErrorOutputItem {};
 class MissEndingQuote : public IErrorOutputItem {};
+class InvalidCharacter : public IErrorOutputItem {};
 
 struct IReportError {
 	virtual void reportsError(std::unique_ptr<IErrorOutputItem> error) = 0;
@@ -161,6 +168,7 @@ private:
 	std::string scanCharSequenceContent(const CharSequenceLiteralPrefix prefix, const char quote);
 	void skipCharSequenceContent(const char endingQuote);
 	std::optional<Token> scanCharSequence(const char quote, const std::string& prefix = "");
+	std::optional<Token> scanPunctuator();
 };
 
 #endif

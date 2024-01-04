@@ -235,25 +235,6 @@ TEST(TestLexer, test_lexer_error_hex_float_has_no_exponent) {
 	}
 }
 
-TEST(TestLexer, test_lexer_error_invalid_number) {
-	std::vector<std::string> literals{
-		".e10f",
-		".ll",
-		".ace"
-	};
-
-	for (size_t i = 0; i < literals.size(); i++) {
-		DummyStringLexerInput ss(literals[i] + "    ");
-		ReportErrorStub stub;
-		Lexer lexer(ss, stub);
-
-		EXPECT_EQ(lexer.next(), std::nullopt);
-		EXPECT_EQ(stub.listOfErrors.size(), 1);
-		EXPECT_TRUE(dynamic_cast<InvalidNumber*>(&(*stub.listOfErrors.front())) != nullptr);
-		EXPECT_EQ(ss.numberOfConsumedChars(), literals[i].size());
-	}
-}
-
 TEST(TestLexer, test_lexer_error_invalid_octal_number) {
 	std::vector<std::string> literals{
 		"0897",
@@ -269,18 +250,6 @@ TEST(TestLexer, test_lexer_error_invalid_octal_number) {
 		EXPECT_EQ(stub.listOfErrors.size(), 1);
 		EXPECT_TRUE(dynamic_cast<InvalidOctalNumber*>(&(*stub.listOfErrors.front())) != nullptr);
 		EXPECT_EQ(ss.numberOfConsumedChars(), literals[i].size());
-	}
-}
-
-TEST(TestLexer, test_character) {
-	const std::string characters{ "{=+-*" };
-	DummyStringLexerInput ss(characters);
-
-	ReportErrorStub stub;
-	Lexer lexer(ss, stub);
-
-	for (const char& ch : characters) {
-		EXPECT_EQ(std::get<char>(*lexer.next()), ch);
 	}
 }
 
@@ -593,4 +562,54 @@ TEST_F(TestComment, test_comment_spans_across_multiple_lines) {
 	EXPECT_EQ(*lexer.next(), Ident{ "foo" });
 	EXPECT_EQ(*lexer.next(), EOI);
 	EXPECT_TRUE(errOut.listOfErrors.empty());
+}
+
+
+TEST_F(TestComment, test_punctuators) {
+	const char* inputStr =
+		"[ ] ( ) { } . -> "
+		"++ -- & * + - ~ ! "
+		"/ % << >> < > <= >= == != ^ | && || "
+		"? : ; "
+		"= *= /= %= += -= <<= >>= &= ^= |= "
+		", <: :> <% %>";
+
+	il.resetInput(inputStr);
+
+	std::istringstream ss(inputStr);
+	std::vector<std::string> punctuators {
+		std::istream_iterator<std::string>(ss),
+		std::istream_iterator<std::string>()
+	};
+
+	for (const auto& punctuatorString : punctuators) {
+		auto punctuator = lexer.next();
+		ASSERT_TRUE(punctuator != std::nullopt);
+		EXPECT_EQ(std::get<Punctuator>(*punctuator), Punctuator{ punctuatorString });
+	}
+
+	EXPECT_TRUE(errOut.listOfErrors.empty());
+}
+
+TEST_F(TestComment, test_dot_that_followed_by_another_token) {
+	il.resetInput(".e10f");
+	EXPECT_EQ(std::get<Punctuator>(*lexer.next()), Punctuator{ "." });
+	EXPECT_EQ(std::get<Ident>(*lexer.next()), Ident{ "e10f" });
+	EXPECT_EQ(std::get<EndOfInput>(*lexer.next()), EOI);
+}
+
+TEST_F(TestComment, test_invalid_characters) {
+	std::string invalidCharacters{ "`@" };
+	for (const auto ch : invalidCharacters) {
+		try {
+			il.resetInput(std::string{ ch });
+			errOut.listOfErrors.clear();
+			lexer.next();
+			FAIL();
+		}
+		catch (std::exception& e) {
+			EXPECT_TRUE(errOut.listOfErrors.size() == 1);
+			EXPECT_TRUE(dynamic_cast<InvalidCharacter *>(&(*errOut.listOfErrors.front())) != nullptr);
+		}
+	}
 }

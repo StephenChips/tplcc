@@ -1,14 +1,50 @@
 #include <vector>
 #include <algorithm>
+#include <numeric>
 #include <cstdint>
 #include <utility>
 #include <optional>
 #include <variant>
 #include <functional>
+#include <sstream>
 
 #include "./Lexer.h"
 
 namespace {
+	template<std::ranges::range Container, typename Element>
+	bool containsElement(Container&& container, Element&& el) {
+		return std::find(container.begin(), container.end(), el) != container.end();
+	}
+
+	std::vector<Punctuator> allPunctuators() {
+		std::vector<Punctuator> punctuators;
+		std::istringstream ss(
+			"[ ] ( ) { } . -> "
+			"++ -- & * + - ~ ! "
+			"/ % << >> < > <= >= == != ^ | && || "
+			"? : ; "
+			"= *= /= %= += -= <<= >>= &= ^= |= "
+			", <: :> <% %>"
+			// Preprocessor-only punctuators ... %:, %:%:, # and ##
+			// are scanned and filtered by the preprocessor, the lexer
+			// won't and shouldn't be received these punctuators, so we
+			// can simply omit them.
+		);
+		std::transform(
+			std::istream_iterator<std::string>(ss),
+			std::istream_iterator<std::string>(),
+			std::back_inserter(punctuators),
+			[](const std::string& punc) { return Punctuator{ punc }; }
+		);
+		std::sort(punctuators.begin(), punctuators.end(),
+			[](const Punctuator& p1, const Punctuator& p2) {
+				return p1.str >= p2.str;
+			});
+		return punctuators;
+	}
+
+	static const std::vector<Punctuator> ALL_PUNCTUATORS = allPunctuators();
+
 	static const std::vector<std::string> UNSIGNED_INT_SUFFIX{
 		"u",
 		"U"
@@ -358,6 +394,20 @@ std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string
 	}
 }
 
+// TODO: linear searching may be slow, try improving the performance later.
+std::optional<Token> Lexer::scanPunctuator()
+{
+	for (const auto& punct : ALL_PUNCTUATORS) {
+		const auto lookahead = input.peekN(punct.str.size());
+		if (punct.str == std::string(lookahead.begin(), lookahead.end())) {
+			input.ignoreN(punct.str.size());
+			return punct;
+		}
+	}
+
+	return std::nullopt;
+}
+
 // Get the next token from given input stream.
 std::optional<Token> Lexer::next()
 {
@@ -386,22 +436,39 @@ std::optional<Token> Lexer::next()
 		if (input.peek() == '"' || input.peek() == '\'') {
 			return scanCharSequence(input.peek(), buffer);
 		}
-		else if (auto result = findKeyword(buffer)) {
+		if (auto result = findKeyword(buffer)) {
 			return *result;
 		}
-		else {
-			return Ident{ std::move(buffer) };
-		}
+
+		return Ident{ std::move(buffer) };
 	}
-	else if (input.peek() == '"' || input.peek() == '\'') {
+	
+	if (input.peek() == '"' || input.peek() == '\'') {
 		return scanCharSequence(input.peek(), "");
 	}
-	else if (std::isdigit(input.peek()) || input.peek() == '.') {
+
+	auto lookaheads = input.peekN(2);
+	if (lookaheads[0] == '.') {
+		if (std::isdigit(lookaheads[1])) {
+			return NumberLiteralScanner(input, errOut).scan();
+		}
+		else {
+			input.ignore();
+			return Punctuator{ "." };
+		}
+	}
+
+	if (std::isdigit(input.peek())) {
 		return NumberLiteralScanner(input, errOut).scan();
 	}
-	else {
-		return (char) input.get();
+
+	if (auto punctuator = scanPunctuator()) {
+		return punctuator;
 	}
+
+	reportsError<InvalidCharacter>(errOut);
+
+	throw std::exception(); // report errors and abort if there is invalid character in the source code. e.g. ` and @.
 }
 
 std::string Lexer::readIdentString()
