@@ -1,5 +1,5 @@
-#ifndef TCC_LEXER_H
-#define TCC_LEXER_H
+#ifndef TPLCC_LEXER_H
+#define TPLCC_LEXER_H
 
 #include <istream>
 #include <vector>
@@ -14,9 +14,9 @@ struct Punctuator {
 	bool operator==(const Punctuator&) const = default;
 };
 
-struct Ident {
+struct Identifier {
 	std::string str;
-	bool operator==(const Ident&) const = default;
+	bool operator==(const Identifier&) const = default;
 };
 
 // The type of a number literal without a type suffix is uncertain
@@ -106,7 +106,7 @@ constexpr const EndOfInput EOI;
 
 using Token = std::variant<
 	Punctuator,
-	Ident,
+	Identifier,
 	NumberLiteral,
 	StringLiteral,
 	CharacterLiteral,

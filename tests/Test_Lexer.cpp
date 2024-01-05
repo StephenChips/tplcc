@@ -209,7 +209,7 @@ TEST_F(TestLexer, test_identifier) {
 
 	for (const auto& id : identifiers) {
 		li.resetInput(id);
-		EXPECT_EQ(std::get<Ident>(*lexer.next()), Ident{ id });
+		EXPECT_EQ(std::get<Identifier>(*lexer.next()), Identifier{ id });
 		EXPECT_EQ(li.numberOfConsumedChars(), id.size());
 	}
 }
@@ -508,7 +508,7 @@ TEST_F(TestLexer, test_comment_surrounded_by_tokens) {
 	li.resetInput("313 /* comment */ foo   ");
 
 	EXPECT_EQ(*lexer.next(), NumberLiteral{ "313" });
-	EXPECT_EQ(*lexer.next(), Ident{ "foo" });
+	EXPECT_EQ(*lexer.next(), Identifier{ "foo" });
 	EXPECT_EQ(*lexer.next(), EOI);
 	EXPECT_TRUE(errOut.listOfErrors.empty());
 }
@@ -517,7 +517,7 @@ TEST_F(TestLexer, test_comment_spans_across_multiple_lines) {
 	li.resetInput("313 /* <- A INT \r\n A IDENTIFIER -> */ foo   ");
 
 	EXPECT_EQ(*lexer.next(), NumberLiteral{ "313" });
-	EXPECT_EQ(*lexer.next(), Ident{ "foo" });
+	EXPECT_EQ(*lexer.next(), Identifier{ "foo" });
 	EXPECT_EQ(*lexer.next(), EOI);
 	EXPECT_TRUE(errOut.listOfErrors.empty());
 }
@@ -552,7 +552,7 @@ TEST_F(TestLexer, test_punctuators) {
 TEST_F(TestLexer, test_dot_that_followed_by_another_token) {
 	li.resetInput(".e10f");
 	EXPECT_EQ(std::get<Punctuator>(*lexer.next()), Punctuator{ "." });
-	EXPECT_EQ(std::get<Ident>(*lexer.next()), Ident{ "e10f" });
+	EXPECT_EQ(std::get<Identifier>(*lexer.next()), Identifier{ "e10f" });
 	EXPECT_EQ(std::get<EndOfInput>(*lexer.next()), EOI);
 }
 

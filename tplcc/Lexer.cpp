@@ -440,7 +440,7 @@ std::optional<Token> Lexer::next()
 			return *result;
 		}
 
-		return Ident{ std::move(buffer) };
+		return Identifier{ std::move(buffer) };
 	}
 	
 	if (input.peek() == '"' || input.peek() == '\'') {
