@@ -154,7 +154,7 @@ namespace {
 		std::string buffer;
 		ILexerInput& input;
 		IReportError &errOut;
-		std::vector<std::unique_ptr<IErrorOutputItem>> listOfErrors; 
+		std::vector<std::unique_ptr<Error>> listOfErrors; 
 
 	public:
 		NumberLiteralScanner(ILexerInput& input, IReportError& errOut) : input(input), errOut(errOut) {};
@@ -183,8 +183,7 @@ namespace {
 
 			for (size_t j = 0; j < availableSuffixes.size(); j++) {
 				if (hasSeenSuffix[j]) {
-					reportsError<InvalidNumberSuffix>(errOut);
-					return false;
+					goto fail;
 				}
 
 				auto& vecOfSuffixes = **(availableSuffixes.begin() + j);
@@ -194,12 +193,21 @@ namespace {
 					continue;
 				}
 
-				reportsError<InvalidNumberSuffix>(errOut);
-				return false;
+				goto fail;
 			}
 		}
 
 		return true;
+
+	fail:
+		const auto numberLiteralNoSuffix = buffer.substr(0, beginIndexOfSuffix);
+		const auto invalidSuffix = buffer.substr(beginIndexOfSuffix);
+		reportsError<StringError>(
+			errOut,
+			"\"" + invalidSuffix + "\" is not a valid suffix for the number literal " + numberLiteralNoSuffix + ".",
+			"invalid suffix."
+		);
+		return false;
 	}
 
 	bool NumberLiteralScanner::scanIntegerSuffixes() {
@@ -227,7 +235,11 @@ namespace {
 
 		if (exponentHasNoDigit) {
 			while (std::isalnum(input.peek())) buffer.push_back(input.get());
-			reportsError<ExponentHasNoDigit>(errOut);
+			reportsError<StringError>(
+				errOut,
+				"Exponent part of number literal " + buffer + " has no digit.",
+				"Exponent has no digit."
+			);
 			return false;
 		}
 		else {
@@ -285,7 +297,11 @@ namespace {
 				numberBase != LiteralNumberBase::Hexadecimal && 
 				std::any_of(buffer.begin(), buffer.end(), std::not_fn(isOctalDigit))
 			) {
-				reportsError<InvalidOctalNumber>(errOut);
+				reportsError<StringError>(
+					errOut,
+					"Invalid octal number.",
+					"Invalid octal number."
+				);
 				return std::nullopt;
 			}
 
@@ -310,18 +326,17 @@ namespace {
 			hasFractionPart = true;
 		}
 
-		if (!hasIntegerPart && !hasFractionPart) {
-			// invalid case e.g. .e10f, .ll, .ace.
-			while (std::isalnum(input.peek())) input.get();
-			reportsError<InvalidNumber>(errOut);
-			return std::nullopt;
-		}
+		// We will not meet invalid case like .e10f, .ll, .ace (!hasIntegerPart && !hasFractionPart)
 
 		const bool hasExponentPart = isFirstCharOfExponentPart(input.peek(), numberBase);
 
 		if (numberBase == LiteralNumberBase::Hexadecimal && !hasExponentPart) {
 			while (std::isalnum(input.peek())) buffer.push_back(input.get());
-			reportsError<HexFloatHasNoExponent>(errOut);
+			reportsError<StringError>(
+				errOut,
+				"Hexadecimal floating point " + buffer + " has no exponent part.",
+				"Hex float has no exponent part."
+			);
 			return std::nullopt;
 		}
 
@@ -356,7 +371,13 @@ std::string Lexer::scanCharSequenceContent(const CharSequenceLiteralPrefix prefi
 	}
 
 	if (input.eof() || input.peek() == '\n') {
-		reportsError<MissEndingQuote>(errOut);
+		reportsError<StringError>(
+			errOut,
+			quote == '"'
+				? "The string literal has no ending quote."
+				: "The character literal has no ending quote.",
+			"No ending quote."
+		);
 		throw std::exception("Irrecoverable error happened, compilation is interrupted.");
 	}
 
@@ -366,7 +387,7 @@ std::string Lexer::scanCharSequenceContent(const CharSequenceLiteralPrefix prefi
 }
 
 // Scan the body of a char sequence (a string literal or a character literal)
-void Lexer::skipCharSequenceContent(const char endingQuote) {
+void Lexer::skipCharSequenceContent(const char endingQuote, const std::string& prefixStr) {
 	input.ignore(); // ignore starting quote
 
 	while (!input.eof() && input.peek() != endingQuote && input.peek() != '\n') {
@@ -374,7 +395,13 @@ void Lexer::skipCharSequenceContent(const char endingQuote) {
 	}
 
 	if (input.eof() || input.peek() == '\n') {
-		reportsError<MissEndingQuote>(errOut);
+		reportsError<StringError>(
+			errOut,
+			endingQuote == '"'
+			? "\"" + prefixStr + "\" is not a valid prefix for a string literal."
+			: "\"" + prefixStr + "\" is not a valid prefix for a character literal.",
+			"Invalid prefix."
+		);
 		throw std::exception("Irrecoverable error happened, compilation is interrupted.");
 	}
 
@@ -389,7 +416,13 @@ std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string
 	}
 	else {
 		skipCharSequenceContent(quote);
-		reportsError<InvalidStringOrCharacterPrefix>(errOut);
+		reportsError<StringError>(
+			errOut,
+			quote == '"'
+				? "\"" + prefixStr + "\" is not a valid prefix for a string literal."
+				: "\"" + prefixStr + "\" is not a valid prefix for a character literal.",
+			"Invalid prefix."
+		);
 		return std::nullopt;
 	}
 }
@@ -466,7 +499,11 @@ std::optional<Token> Lexer::next()
 		return punctuator;
 	}
 
-	reportsError<InvalidCharacter>(errOut);
+	reportsError<StringError>(
+		errOut,
+		std::string("Stray \"") + (char) input.peek() + "\" in program.",
+		"Invalid character."
+	);
 
 	throw std::exception(); // report errors and abort if there is invalid character in the source code. e.g. ` and @.
 }

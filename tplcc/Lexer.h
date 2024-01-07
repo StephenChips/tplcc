@@ -9,6 +9,8 @@
 #include <variant>
 #include <concepts>
 
+#include "error-reporting.h"
+
 struct Punctuator {
 	std::string str;
 	bool operator==(const Punctuator&) const = default;
@@ -115,30 +117,7 @@ using Token = std::variant<
 	EndOfInput
 >;
 
-class IErrorOutputItem {
-public:
-	IErrorOutputItem() = default;
-	virtual ~IErrorOutputItem() = default;
-};
-
-class InvalidNumberSuffix: public IErrorOutputItem {};
-class ExponentHasNoDigit: public IErrorOutputItem {};
-class HexFloatHasNoExponent: public IErrorOutputItem {};
-class InvalidNumber: public IErrorOutputItem {};
-class InvalidOctalNumber: public IErrorOutputItem {};
-class StringMissEndingQuote : public IErrorOutputItem {};
-class StringInvalidEscape : public IErrorOutputItem {};
-class HexEscapeSequenceOutOfRange : public IErrorOutputItem {};
-class InvalidStringOrCharacterPrefix : public IErrorOutputItem {};
-class MissEndingQuote : public IErrorOutputItem {};
-class InvalidCharacter : public IErrorOutputItem {};
-
-struct IReportError {
-	virtual void reportsError(std::unique_ptr<IErrorOutputItem> error) = 0;
-	virtual ~IReportError() = default;
-};
-
-// provide a forward-only stream-like input interface
+// provide a forward-only n-lookahead stream-like input interface
 struct ILexerInput {
 	virtual int get() = 0;
 	virtual int peek() = 0;
@@ -149,11 +128,6 @@ struct ILexerInput {
 	virtual size_t numberOfConsumedChars() = 0;
 	virtual ~ILexerInput() = default;
 };
-
-template<typename T, typename... Args>
-void reportsError(IReportError& errOut, Args&&... args) {
-	errOut.reportsError(std::make_unique<T>(std::forward(args)...));
-}
 
 class Lexer {
 private:
@@ -166,7 +140,7 @@ private:
 	std::string readIdentString();
 	std::optional<Keyword> findKeyword(const std::string& str);
 	std::string scanCharSequenceContent(const CharSequenceLiteralPrefix prefix, const char quote);
-	void skipCharSequenceContent(const char endingQuote);
+	void skipCharSequenceContent(const char endingQuote, const std::string& prefix = "");
 	std::optional<Token> scanCharSequence(const char quote, const std::string& prefix = "");
 	std::optional<Token> scanPunctuator();
 };

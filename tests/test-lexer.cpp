@@ -1,6 +1,7 @@
 ﻿#include <sstream>
 #include <vector>
 #include <gtest/gtest.h>
+#include <format>
 #include "../tplcc/Lexer.h"
 
 template<typename T>
@@ -14,9 +15,9 @@ bool operator==(const Token& token, const T& literal) {
 }
 
 struct ReportErrorStub : IReportError {
-	std::vector<std::unique_ptr<IErrorOutputItem>> listOfErrors{};
+	std::vector<std::unique_ptr<Error>> listOfErrors{};
 
-	void reportsError(std::unique_ptr<IErrorOutputItem> error) override {
+	void reportsError(std::unique_ptr<Error> error) override {
 		listOfErrors.push_back(std::move(error));
 	}
 };
@@ -105,14 +106,15 @@ public:
 		EXPECT_EQ(lexer.next(), std::nullopt);
 		EXPECT_TRUE(errOut.listOfErrors.size() == 1);
 
-		auto ptrToError = dynamic_cast<InvalidStringOrCharacterPrefix*>(errOut.listOfErrors[0].get());
-		EXPECT_TRUE(ptrToError != nullptr);
+		const auto& error = errOut.listOfErrors[0];
+		EXPECT_EQ(error->errorMessage(), "\"" + prefix + "\" is not a valid prefix for a string literal.");
+		EXPECT_EQ(error->hint(), "Invalid prefix.");
 	}
 
 	// If we let the lexer continue scanning when it detects this kind of error, it will probably
-// generate wrong tokens or even more erros and cause the parser to produce pointless and confusing
-// errors, so it is better to print out all errors that we've found now, halt the program, ask the
-// programmer fixes the bugs and let him re-run the compiler.
+	// generate wrong tokens and cause the parser to produce pointless and confusing
+	// errors, so it is better to print out all errors that we've found now, halt the program, ask the
+	// programmer fixes the bugs and let him re-run the compiler.
 	void testStringMissEndingQuote(const std::string& str) {
 		try {
 			li.resetInput(str);
@@ -121,32 +123,11 @@ public:
 			FAIL();
 		}
 		catch (std::exception&) {
-			EXPECT_TRUE(errOut.listOfErrors.size() == 1);
-			auto ptrToError = dynamic_cast<StringMissEndingQuote*>(errOut.listOfErrors[0].get());
-			EXPECT_TRUE(ptrToError == nullptr);
+			ASSERT_TRUE(errOut.listOfErrors.size() == 1);
+			const auto& error = errOut.listOfErrors[0];
+			EXPECT_EQ(error->errorMessage(), "The string literal has no ending quote.");
+			EXPECT_EQ(error->hint(), "No ending quote.");
 		}
-	}
-
-	void testStringInvalidEscape(const std::string& str) {
-		li.resetInput(str);
-		errOut.listOfErrors.clear();
-
-		EXPECT_EQ(lexer.next(), std::nullopt);
-		ASSERT_TRUE(!errOut.listOfErrors.empty() && errOut.listOfErrors.size() == 1);
-
-		auto ptrToError = dynamic_cast<StringInvalidEscape*>(errOut.listOfErrors[0].get());
-		EXPECT_TRUE(ptrToError == nullptr);
-	}
-
-	void testHexEscapeSequenceOutOfRange(const std::string& str) {
-		li.resetInput(str);
-		errOut.listOfErrors.clear();
-
-		ASSERT_EQ(lexer.next(), std::nullopt);
-		EXPECT_TRUE(errOut.listOfErrors.size() == 1);
-
-		auto ptrToError = dynamic_cast<HexEscapeSequenceOutOfRange*>(errOut.listOfErrors[0].get());
-		EXPECT_TRUE(ptrToError == nullptr);
 	}
 
 	// like string misses its ending quote, we throw an exception here too.
@@ -159,9 +140,10 @@ public:
 			FAIL();
 		}
 		catch (std::exception&) {
-			EXPECT_TRUE(errOut.listOfErrors.size() == 1);
-			auto ptrToError = dynamic_cast<MissEndingQuote*>(errOut.listOfErrors[0].get());
-			EXPECT_TRUE(ptrToError != nullptr);
+			ASSERT_TRUE(errOut.listOfErrors.size() == 1);
+			const auto& error = errOut.listOfErrors[0];
+			EXPECT_EQ(error->errorMessage(), "The character literal has no ending quote.");
+			EXPECT_EQ(error->hint(), "No ending quote.");
 		}
 	}
 
@@ -171,8 +153,22 @@ public:
 
 		EXPECT_EQ(lexer.next(), std::nullopt);
 		EXPECT_TRUE(errOut.listOfErrors.size() == 1);
-		auto ptrToError = dynamic_cast<InvalidStringOrCharacterPrefix*>(errOut.listOfErrors[0].get());
-		EXPECT_TRUE(ptrToError != nullptr);
+		const auto& error = errOut.listOfErrors[0];
+		EXPECT_EQ(error->errorMessage(), "\"" + prefix + "\" is not a valid prefix for a character literal.");
+		EXPECT_EQ(error->hint(), "Invalid prefix.");
+	}
+
+	void testInvalidNumberSuffix(std::string numberLiteralNoSuffix, std::string invalidSuffix) {
+		auto invalidNumber = numberLiteralNoSuffix + invalidSuffix;
+		li.resetInput(invalidNumber);
+		errOut.listOfErrors.clear();
+		EXPECT_EQ(lexer.next(), std::nullopt);
+		EXPECT_EQ(errOut.listOfErrors.size(), 1);
+
+		const auto& error = errOut.listOfErrors.front();
+		EXPECT_EQ(error->errorMessage(), "\"" + invalidSuffix + "\" is not a valid suffix for the number literal " + numberLiteralNoSuffix + ".");
+		EXPECT_EQ(error->hint(), "invalid suffix.");
+		EXPECT_EQ(li.numberOfConsumedChars(), invalidNumber.size());
 	}
 };
 
@@ -269,22 +265,11 @@ TEST_F(TestLexer, test_hexadecimal_floating_numbers) {
 	}
 }
 
-TEST_F(TestLexer, test_lexer_error_invalid_number_suffix) {
-	std::vector<std::string> literals{
-		"4f",
-		"4.0ul",
-		"4.abc",
-		"4abc",
-	};
-
-	for (size_t i = 0; i < literals.size(); i++) {
-		li.resetInput(literals[i]);
-		errOut.listOfErrors.clear();
-		EXPECT_EQ(lexer.next(), std::nullopt);
-		EXPECT_EQ(errOut.listOfErrors.size(), 1);
-		EXPECT_TRUE(dynamic_cast<InvalidNumberSuffix*>(&(*errOut.listOfErrors.front())) != nullptr);
-		EXPECT_EQ(li.numberOfConsumedChars(), literals[i].size());
-	}
+TEST_F(TestLexer, test_invalid_number_suffix) {
+	testInvalidNumberSuffix("4", "f");
+	testInvalidNumberSuffix("4.0", "ul");
+	testInvalidNumberSuffix("4.", "abc");
+	testInvalidNumberSuffix("4", "abc");
 }
 
 TEST_F(TestLexer, test_lexer_error_exponent_has_no_digit) {
@@ -299,7 +284,10 @@ TEST_F(TestLexer, test_lexer_error_exponent_has_no_digit) {
 		errOut.listOfErrors.clear();
 		EXPECT_EQ(lexer.next(), std::nullopt);
 		EXPECT_EQ(errOut.listOfErrors.size(), 1);
-		EXPECT_TRUE(dynamic_cast<ExponentHasNoDigit*>(&(*errOut.listOfErrors.front())) != nullptr);
+		
+		const auto& error = errOut.listOfErrors[0];
+		EXPECT_EQ(error->errorMessage(), "Exponent part of number literal " + literals[i] + " has no digit.");
+		EXPECT_EQ(error->hint(), "Exponent has no digit.");
 		EXPECT_EQ(li.numberOfConsumedChars(), literals[i].size());
 	}
 }
@@ -317,7 +305,10 @@ TEST_F(TestLexer, test_lexer_error_hex_float_has_no_exponent) {
 
 		EXPECT_EQ(lexer.next(), std::nullopt);
 		EXPECT_EQ(errOut.listOfErrors.size(), 1);
-		EXPECT_TRUE(dynamic_cast<HexFloatHasNoExponent*>(&(*errOut.listOfErrors.front())) != nullptr);
+
+		const auto& error = errOut.listOfErrors[0];
+		EXPECT_EQ(error->errorMessage(), "Hexadecimal floating point " + literals[i] + " has no exponent part.");
+		EXPECT_EQ(error->hint(), "Hex float has no exponent part.");
 		EXPECT_EQ(li.numberOfConsumedChars(), literals[i].size());
 	}
 }
@@ -334,7 +325,10 @@ TEST_F(TestLexer, test_lexer_error_invalid_octal_number) {
 
 		EXPECT_EQ(lexer.next(), std::nullopt);
 		EXPECT_EQ(errOut.listOfErrors.size(), 1);
-		EXPECT_TRUE(dynamic_cast<InvalidOctalNumber*>(&(*errOut.listOfErrors.front())) != nullptr);
+
+		const auto& error = errOut.listOfErrors[0];
+		EXPECT_EQ(error->errorMessage(), "Invalid octal number.");
+		EXPECT_EQ(error->hint(), "Invalid octal number.");
 		EXPECT_EQ(li.numberOfConsumedChars(), literals[i].size());
 	}
 }
@@ -565,9 +559,11 @@ TEST_F(TestLexer, test_invalid_characters) {
 			lexer.next();
 			FAIL();
 		}
-		catch (std::exception& e) {
+		catch (std::exception&) {
 			EXPECT_TRUE(errOut.listOfErrors.size() == 1);
-			EXPECT_TRUE(dynamic_cast<InvalidCharacter *>(&(*errOut.listOfErrors.front())) != nullptr);
+			const auto& error = errOut.listOfErrors[0];
+			EXPECT_EQ(error->errorMessage(), std::string("Stray \"") + ch +  "\" in program.");
+			EXPECT_EQ(error->hint(), "Invalid character.");
 		}
 	}
 }
