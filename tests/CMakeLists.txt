@@ -8,9 +8,9 @@ if(WIN32)
 endif()
 
 add_executable(tests-main
-	"../tplcc/Lexer.cpp"
+	"../tplcc/lexer.cpp"
 	"../tplcc/Lexer.h"
-	"Test_Lexer.cpp"
+	"test-lexer.cpp"
 )
 
 target_link_libraries(

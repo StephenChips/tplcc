@@ -154,7 +154,7 @@ namespace {
 		std::string buffer;
 		ILexerInput& input;
 		IReportError &errOut;
-		std::vector<std::unique_ptr<IErrorOutputItem>> listOfErrors; 
+		std::vector<std::unique_ptr<Error>> listOfErrors; 
 
 	public:
 		NumberLiteralScanner(ILexerInput& input, IReportError& errOut) : input(input), errOut(errOut) {};
@@ -183,8 +183,7 @@ namespace {
 
 			for (size_t j = 0; j < availableSuffixes.size(); j++) {
 				if (hasSeenSuffix[j]) {
-					reportsError<InvalidNumberSuffix>(errOut);
-					return false;
+					goto fail;
 				}
 
 				auto& vecOfSuffixes = **(availableSuffixes.begin() + j);
@@ -194,12 +193,21 @@ namespace {
 					continue;
 				}
 
-				reportsError<InvalidNumberSuffix>(errOut);
-				return false;
+				goto fail;
 			}
 		}
 
 		return true;
+
+	fail:
+		const auto numberLiteralNoSuffix = buffer.substr(0, beginIndexOfSuffix);
+		const auto invalidSuffix = buffer.substr(beginIndexOfSuffix);
+		reportsError<StringError>(
+			errOut,
+			"\"" + invalidSuffix + "\" is not a valid suffix for the number literal " + numberLiteralNoSuffix + ".",
+			"invalid suffix"
+		);
+		return false;
 	}
 
 	bool NumberLiteralScanner::scanIntegerSuffixes() {

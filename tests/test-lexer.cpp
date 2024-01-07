@@ -1,6 +1,7 @@
 ﻿#include <sstream>
 #include <vector>
 #include <gtest/gtest.h>
+#include <format>
 #include "../tplcc/Lexer.h"
 
 template<typename T>
@@ -14,9 +15,9 @@ bool operator==(const Token& token, const T& literal) {
 }
 
 struct ReportErrorStub : IReportError {
-	std::vector<std::unique_ptr<IErrorOutputItem>> listOfErrors{};
+	std::vector<std::unique_ptr<Error>> listOfErrors{};
 
-	void reportsError(std::unique_ptr<IErrorOutputItem> error) override {
+	void reportsError(std::unique_ptr<Error> error) override {
 		listOfErrors.push_back(std::move(error));
 	}
 };
@@ -174,6 +175,19 @@ public:
 		auto ptrToError = dynamic_cast<InvalidStringOrCharacterPrefix*>(errOut.listOfErrors[0].get());
 		EXPECT_TRUE(ptrToError != nullptr);
 	}
+
+	void testInvalidNumberSuffix(std::string numberLiteralNoSuffix, std::string invalidSuffix) {
+		auto invalidNumber = numberLiteralNoSuffix + invalidSuffix;
+		li.resetInput(invalidNumber);
+		errOut.listOfErrors.clear();
+		EXPECT_EQ(lexer.next(), std::nullopt);
+		EXPECT_EQ(errOut.listOfErrors.size(), 1);
+
+		const auto& error = errOut.listOfErrors.front();
+		EXPECT_EQ(error->errorMessage(), "\"" + invalidSuffix + "\" is not a valid suffix for the number literal " + numberLiteralNoSuffix + ".");
+		EXPECT_EQ(error->hint(), "invalid suffix");
+		EXPECT_EQ(li.numberOfConsumedChars(), invalidNumber.size());
+	}
 };
 
 TEST_F(TestLexer, test_keyword) {
@@ -269,22 +283,11 @@ TEST_F(TestLexer, test_hexadecimal_floating_numbers) {
 	}
 }
 
-TEST_F(TestLexer, test_lexer_error_invalid_number_suffix) {
-	std::vector<std::string> literals{
-		"4f",
-		"4.0ul",
-		"4.abc",
-		"4abc",
-	};
-
-	for (size_t i = 0; i < literals.size(); i++) {
-		li.resetInput(literals[i]);
-		errOut.listOfErrors.clear();
-		EXPECT_EQ(lexer.next(), std::nullopt);
-		EXPECT_EQ(errOut.listOfErrors.size(), 1);
-		EXPECT_TRUE(dynamic_cast<InvalidNumberSuffix*>(&(*errOut.listOfErrors.front())) != nullptr);
-		EXPECT_EQ(li.numberOfConsumedChars(), literals[i].size());
-	}
+TEST_F(TestLexer, test_invalid_number_suffix) {
+	testInvalidNumberSuffix("4", "f");
+	testInvalidNumberSuffix("4.0", "ul");
+	testInvalidNumberSuffix("4.", "abc");
+	testInvalidNumberSuffix("4", "abc");
 }
 
 TEST_F(TestLexer, test_lexer_error_exponent_has_no_digit) {

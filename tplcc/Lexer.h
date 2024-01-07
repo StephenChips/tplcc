@@ -9,6 +9,8 @@
 #include <variant>
 #include <concepts>
 
+#include "error-reporting.h"
+
 struct Punctuator {
 	std::string str;
 	bool operator==(const Punctuator&) const = default;
@@ -115,30 +117,28 @@ using Token = std::variant<
 	EndOfInput
 >;
 
-class IErrorOutputItem {
+class InvalidNumberSuffix: public Error {
+	std::string invalidSuffix;
+	std::string numberLiteralNoSuffix;
 public:
-	IErrorOutputItem() = default;
-	virtual ~IErrorOutputItem() = default;
+	InvalidNumberSuffix(std::string numberLiteralNoSuffix, std::string invalidSuffix) : numberLiteralNoSuffix(numberLiteralNoSuffix), invalidSuffix(invalidSuffix) {};
+	std::string errorMessage() {
+		return "\"" + invalidSuffix + "\" is not a valid suffix for the number literal " + numberLiteralNoSuffix + ".";
+	}
 };
 
-class InvalidNumberSuffix: public IErrorOutputItem {};
-class ExponentHasNoDigit: public IErrorOutputItem {};
-class HexFloatHasNoExponent: public IErrorOutputItem {};
-class InvalidNumber: public IErrorOutputItem {};
-class InvalidOctalNumber: public IErrorOutputItem {};
-class StringMissEndingQuote : public IErrorOutputItem {};
-class StringInvalidEscape : public IErrorOutputItem {};
-class HexEscapeSequenceOutOfRange : public IErrorOutputItem {};
-class InvalidStringOrCharacterPrefix : public IErrorOutputItem {};
-class MissEndingQuote : public IErrorOutputItem {};
-class InvalidCharacter : public IErrorOutputItem {};
+class ExponentHasNoDigit: public Error {};
+class HexFloatHasNoExponent: public Error {};
+class InvalidNumber: public Error {};
+class InvalidOctalNumber: public Error {};
+class StringMissEndingQuote : public Error {};
+class StringInvalidEscape : public Error {};
+class HexEscapeSequenceOutOfRange : public Error {};
+class InvalidStringOrCharacterPrefix : public Error {};
+class MissEndingQuote : public Error {};
+class InvalidCharacter : public Error {};
 
-struct IReportError {
-	virtual void reportsError(std::unique_ptr<IErrorOutputItem> error) = 0;
-	virtual ~IReportError() = default;
-};
-
-// provide a forward-only stream-like input interface
+// provide a forward-only n-lookahead stream-like input interface
 struct ILexerInput {
 	virtual int get() = 0;
 	virtual int peek() = 0;
@@ -149,11 +149,6 @@ struct ILexerInput {
 	virtual size_t numberOfConsumedChars() = 0;
 	virtual ~ILexerInput() = default;
 };
-
-template<typename T, typename... Args>
-void reportsError(IReportError& errOut, Args&&... args) {
-	errOut.reportsError(std::make_unique<T>(std::forward(args)...));
-}
 
 class Lexer {
 private:
