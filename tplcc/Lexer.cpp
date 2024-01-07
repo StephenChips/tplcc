@@ -358,16 +358,16 @@ constexpr std::optional<CharSequenceLiteralPrefix> getCharSequencePrefix(const s
 }
 
 // Scan the body of a char sequence (a string literal or a character literal)
-std::string Lexer::scanCharSequenceContent(const CharSequenceLiteralPrefix prefix, const char quote) {
-	std::string output;
-
+void Lexer::scanCharSequenceContent(const char quote, std::string* output) {
 	input.ignore(); // ignore starting quote
 
 	while (!input.eof() && input.peek() != quote && input.peek() != '\n') {
 		if (input.peek() == '\\') { // skip if it's a escaping.
-			output.push_back(input.get());
+			int ch = input.get();
+			if (output) output->push_back(ch);
 		}
-		output.push_back(input.get());
+		int ch = input.get();
+		if (output) output->push_back(ch);
 	}
 
 	if (input.eof() || input.peek() == '\n') {
@@ -382,40 +382,17 @@ std::string Lexer::scanCharSequenceContent(const CharSequenceLiteralPrefix prefi
 	}
 
 	input.ignore(); // ignore ending quote
-
-	return output;
-}
-
-// Scan the body of a char sequence (a string literal or a character literal)
-void Lexer::skipCharSequenceContent(const char endingQuote, const std::string& prefixStr) {
-	input.ignore(); // ignore starting quote
-
-	while (!input.eof() && input.peek() != endingQuote && input.peek() != '\n') {
-		input.ignore();
-	}
-
-	if (input.eof() || input.peek() == '\n') {
-		reportsError<StringError>(
-			errOut,
-			endingQuote == '"'
-			? "\"" + prefixStr + "\" is not a valid prefix for a string literal."
-			: "\"" + prefixStr + "\" is not a valid prefix for a character literal.",
-			"Invalid prefix."
-		);
-		throw std::exception("Irrecoverable error happened, compilation is interrupted.");
-	}
-
-	input.ignore(); // ignore ending quote
 }
 
 std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string& prefixStr) {
 	if (auto prefix = getCharSequencePrefix(prefixStr)) {
-		const std::string buffer = scanCharSequenceContent(*prefix, quote);
+		std::string buffer;
+		scanCharSequenceContent(quote, &buffer);
 		if (quote == '"') return StringLiteral{ buffer, *prefix };
 		else return CharacterLiteral{ buffer, *prefix };
 	}
 	else {
-		skipCharSequenceContent(quote);
+		scanCharSequenceContent(quote, nullptr);
 		reportsError<StringError>(
 			errOut,
 			quote == '"'

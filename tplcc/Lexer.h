@@ -139,8 +139,7 @@ public:
 private:
 	std::string readIdentString();
 	std::optional<Keyword> findKeyword(const std::string& str);
-	std::string scanCharSequenceContent(const CharSequenceLiteralPrefix prefix, const char quote);
-	void skipCharSequenceContent(const char endingQuote, const std::string& prefix = "");
+	void scanCharSequenceContent(const char quote, std::string* output);
 	std::optional<Token> scanCharSequence(const char quote, const std::string& prefix = "");
 	std::optional<Token> scanPunctuator();
 };
