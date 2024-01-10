@@ -11,7 +11,9 @@ add_executable(tests-main
 	"../tplcc/lexer.cpp"
 	"../tplcc/Lexer.h"
 	"test-lexer.cpp"
-)
+	"../tplcc/scanner.h"
+	"../tplcc/scanner.cpp"
+	"test-scanner.cpp")
 
 target_link_libraries(
   tests-main

@@ -152,12 +152,12 @@ namespace {
 	
 	class NumberLiteralScanner {
 		std::string buffer;
-		ILexerInput& input;
+		IScanner& input;
 		IReportError &errOut;
 		std::vector<std::unique_ptr<Error>> listOfErrors; 
 
 	public:
-		NumberLiteralScanner(ILexerInput& input, IReportError& errOut) : input(input), errOut(errOut) {};
+		NumberLiteralScanner(IScanner& input, IReportError& errOut) : input(input), errOut(errOut) {};
 		std::optional<NumberLiteral> scan();
 	private:
 		
@@ -258,7 +258,7 @@ namespace {
 		return NumberLiteral{ std::move(buffer) };
 	}
 
-	// The number first set of a c-number is {'0' - '9'} �� {'.'}. This function should only be called when current
+	// The number first set of a c-number is {'0' - '9'} and {'.'}. This function should only be called when current
 	// `is.peek()` is one of the characters in the first set.
 	std::optional<NumberLiteral> NumberLiteralScanner::scan() {
 		bool hasIntegerPart = false;
@@ -361,7 +361,7 @@ constexpr std::optional<CharSequenceLiteralPrefix> getCharSequencePrefix(const s
 void Lexer::scanCharSequenceContent(const char quote, std::string* output) {
 	input.ignore(); // ignore starting quote
 
-	while (!input.eof() && input.peek() != quote && input.peek() != '\n') {
+	while (!input.reachedEndOfInput() && input.peek() != quote && input.peek() != '\n') {
 		if (input.peek() == '\\') { // skip if it's a escaping.
 			int ch = input.get();
 			if (output) output->push_back(ch);
@@ -370,7 +370,7 @@ void Lexer::scanCharSequenceContent(const char quote, std::string* output) {
 		if (output) output->push_back(ch);
 	}
 
-	if (input.eof() || input.peek() == '\n') {
+	if (input.reachedEndOfInput() || input.peek() == '\n') {
 		reportsError<StringError>(
 			errOut,
 			quote == '"'
@@ -381,7 +381,7 @@ void Lexer::scanCharSequenceContent(const char quote, std::string* output) {
 		throw std::exception("Irrecoverable error happened, compilation is interrupted.");
 	}
 
-	input.ignore(); // ignore ending quote
+	input.ignore(); // ignore the ending quote
 }
 
 std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string& prefixStr) {
@@ -423,11 +423,11 @@ std::optional<Token> Lexer::next()
 {
 	while (std::isspace(input.peek())) input.ignore();
 
-	if (input.eof()) return EOI;
+	if (input.reachedEndOfInput()) return EOI;
 
 	if (input.peekN(2) == std::vector<int>{'/', '/'}) {
 		input.ignoreN(2);
-		while (!input.eof() && input.peek() != '\n') input.ignore();
+		while (!input.reachedEndOfInput() && input.peek() != '\n') input.ignore();
 		input.ignore();
 		return next();
 	}
@@ -435,7 +435,7 @@ std::optional<Token> Lexer::next()
 	if (input.peekN(2) == std::vector<int>{'/', '*'}) {
 		input.ignoreN(2);
 		std::vector<int> endOfComment{ '*', '/' };
-		while (!input.eof() && input.peekN(2) != endOfComment) input.ignore();
+		while (!input.reachedEndOfInput() && input.peekN(2) != endOfComment) input.ignore();
 		input.ignoreN(2);
 		return next();
 	}

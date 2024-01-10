@@ -9,7 +9,9 @@
 #include <variant>
 #include <concepts>
 
-#include "error-reporting.h"
+#include "scanner.h"
+#include "error-reporter.h"
+#include "preprocessor.h"
 
 struct Punctuator {
 	std::string str;
@@ -117,24 +119,12 @@ using Token = std::variant<
 	EndOfInput
 >;
 
-// provide a forward-only n-lookahead stream-like input interface
-struct ILexerInput {
-	virtual int get() = 0;
-	virtual int peek() = 0;
-	virtual std::vector<int> peekN(size_t n) = 0;
-	virtual void ignore() = 0;
-	virtual void ignoreN(size_t n) = 0;
-	virtual bool eof() = 0;
-	virtual size_t numberOfConsumedChars() = 0;
-	virtual ~ILexerInput() = default;
-};
-
 class Lexer {
 private:
-	ILexerInput& input;
+	IScanner& input;
 	IReportError& errOut;
 public:
-	Lexer(ILexerInput& is, IReportError& errOut): input(is), errOut(errOut){}
+	Lexer(IScanner& is, IReportError& errOut): input(is), errOut(errOut){}
 	std::optional<Token> next();
 private:
 	std::string readIdentString();

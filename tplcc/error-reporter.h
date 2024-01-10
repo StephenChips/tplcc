@@ -1,10 +1,13 @@
+
+#ifndef TPLCC_ERROR_REPORTING_H
+#define TPLCC_ERROR_REPORTING_H
+
 #include <memory>
 #include <string>
 #include <vector>
 #include <optional>
 
-#ifndef TPLCC_ERROR_REPORTING_H
-#define TPLCC_ERROR_REPORTING_H
+#include "scanner.h"
 
 class Error {
 public:
@@ -115,65 +118,25 @@ It's expanded into following text:
 ```
 
 The error passed to the reportsError by any transformation unit (lexer, parser, syntax analyzer etc.) only contains
-the most basic error message i.e. `variable "foo" is undefined`. The error message, as a "ingredient", will be used
-to produce the complete error message.
+the most basic error message i.e. `variable "foo" is undefined`. This is not enough for users. We shall print out the
+line where the error occurs, and highlight the part that causes the error.
+
+Since the error itself doesn't contains any information on its occuring position, in addition to the error object itself,
+a `CodePos` object is needed when we call the method `reportsError`. The later should be obtained by the IContext
+interface, which will be injected into every transformation unit
 
 If the error is not from a expanded macro, we can simply store the part we are going to hightlight in a ErrorLocation
 object.
-
-Otherwise the situation is more complicated. Since there can be multiple errors in a text expanded from a macro,
-to avoid making the error list lengthy, it is better to highlight all errors in one expanded text (as the example shows).
-We can maintain a "call stack" for macro expansion. Whenever we "call" a macro, we will take down its the line number
-and character offset in a MacroExpansionContext object, which contains a list of locations. Whenever we find an error while
-processing the macro, we will create a ErrorLocation and push it to the error list. The lineNumber and highlightRange is based on
-the macro's beginning line number and character offset stored in the MacroExpansionContext object.
 
 */
 
 
 // The interface exposes error strings, these structs are all private.
 
-struct CodePos {
-    size_t lineNumber;
-    size_t charOffset;
-};
-
-struct CodeRange {
-    CodePos start, end;
-};
-
-struct MacroExpansionContext {
-    CodeRange macroExpr;
-    std::string macroDef;
-};
-
-struct ErrorWithLocation : Error {
-    CodeRange location;
-    std::unique_ptr<Error> error;
-};
-
-struct ListOfInMacroError : Error {
-    CodeRange macroExpr;
-    std::vector<ErrorWithLocation> listOfErrors;
-};
-
-struct ErrorListOfFile {
-    std::vector<Error> listOfErrors;
-};
-
-struct MacroDefinition {
-    std::string name;
-    std::vector<std::string> parameters;
-    std::string body;
-public:
-
-    std::string expand(std::vector<std::string> arguments);
-};
-
-class Preprocessor {
-public:
-    const std::optional<MacroDefinition&> macroCurrentlyBeingExpanded();
-};
+/*
+* depends on the context, a `CodePos` struct can represent a position
+* in a source code or a position in a macro-expanded text 
+*/
 
 // Objects of this class collect errors from transformation units (lexer, parser i.e.),
 // add infomation about the location where the error occurs, shows the macro expansion
@@ -182,13 +145,13 @@ public:
 class ErrorReporter: IReportError {
     std::string filename;
     std::vector<Error> listOfErrors;
-    Preprocessor& preprocessor;
+    IGetText& objGetText;
 public:
     ErrorReporter(
         std::string filename,
-        Preprocessor& preprocessor,
-        std::ostream& outStream
-    ) : filename(filename), preprocessor(preprocessor) {}
+        std::ostream& outStream,
+        IGetText& objGetText
+    ) : filename(filename), objGetText(objGetText) {}
 
     void reportsError(std::unique_ptr<Error> error);
     void outputErrorMessagesTo(std::ostream& os);
