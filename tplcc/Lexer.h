@@ -11,7 +11,6 @@
 
 #include "scanner.h"
 #include "error-reporter.h"
-#include "preprocessor.h"
 
 struct Punctuator {
 	std::string str;
