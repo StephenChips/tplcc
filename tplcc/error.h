@@ -45,7 +45,7 @@ void reportsError(IReportError& errOut, CodeRange pos, Args&&... args) {
 
 /* 
 
-# WHAT ARE THE FORMAT OF ERROR MESSAGES #
+# WHAT IS THE FORMAT OF ERROR MESSAGES #
 
  We can devide errors in a programme into two kinds:
 1. The first kind are those happens in a macro expansion
@@ -94,7 +94,7 @@ and is expanded into following text:
    | }
 ```
 
-If the errors is inside some #include directive, we should print the included file's name first, then print out the error.
+If the error is inside some #include directive, we should print the included file's name first, then print out the error.
 
 ```
 In the included file "abc.h"
