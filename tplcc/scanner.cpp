@@ -39,12 +39,12 @@ std::vector<int> TextScanner::peekN(size_t n) {
 }
 
 void TextScanner::ignore() {
-	if (!reachedEndOfInput()) cursor++;
+	get();
 }
 
 void TextScanner::ignoreN(size_t n) {
 	for (size_t i = 0; !reachedEndOfInput() && i < n; i++) {
-		cursor++;
+		get();
 	}
 }
 bool TextScanner::reachedEndOfInput() {

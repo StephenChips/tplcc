@@ -10,7 +10,7 @@
 #include <concepts>
 
 #include "scanner.h"
-#include "error-reporter.h"
+#include "error.h"
 
 struct Punctuator {
 	std::string str;
@@ -129,7 +129,7 @@ private:
 	std::string readIdentString();
 	std::optional<Keyword> findKeyword(const std::string& str);
 	void scanCharSequenceContent(const char quote, std::string* output);
-	std::optional<Token> scanCharSequence(const char quote, const std::string& prefix = "");
+	std::optional<Token> scanCharSequence(const char quote, const std::string& prefix, const CodePos& startPos = {});
 	std::optional<Token> scanPunctuator();
 };
 

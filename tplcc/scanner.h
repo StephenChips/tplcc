@@ -7,16 +7,17 @@
 struct CodePos {
 	size_t lineNumber;
 	size_t charOffset;
+	bool operator==(const CodePos&) const = default;
 };
 
 struct CodeRange {
 	CodePos start, end;
+	bool operator==(const CodeRange&) const = default;
 };
 
 struct IGetText {
 	virtual std::string getText(size_t startLine, size_t endLine) = 0;
 	virtual std::string getText(size_t line) { return this->getText(line, line); }
-
 	~IGetText() = default;
 };
 

@@ -155,9 +155,11 @@ namespace {
 		IScanner& input;
 		IReportError &errOut;
 		std::vector<std::unique_ptr<Error>> listOfErrors; 
+		CodePos startPos;
 
 	public:
-		NumberLiteralScanner(IScanner& input, IReportError& errOut) : input(input), errOut(errOut) {};
+		NumberLiteralScanner(IScanner& input, IReportError& errOut)
+			: input(input), errOut(errOut), startPos(input.currentCodePos()) {};
 		std::optional<NumberLiteral> scan();
 	private:
 		
@@ -204,6 +206,7 @@ namespace {
 		const auto invalidSuffix = buffer.substr(beginIndexOfSuffix);
 		reportsError<StringError>(
 			errOut,
+			CodeRange { startPos, input.currentCodePos()},
 			"\"" + invalidSuffix + "\" is not a valid suffix for the number literal " + numberLiteralNoSuffix + ".",
 			"invalid suffix."
 		);
@@ -218,8 +221,7 @@ namespace {
 		return scanSuffixes({ &TYPE_FLOAT_AND_DOUBLE_SUFFIX });
 	}
 
-	bool NumberLiteralScanner::scanExponentPart()
-	{
+	bool NumberLiteralScanner::scanExponentPart() {
 		bool exponentHasNoDigit = true;
 
 		buffer.push_back(input.get()); // read the 'e'/'E'/'p'/'P' at the beginning
@@ -237,6 +239,7 @@ namespace {
 			while (std::isalnum(input.peek())) buffer.push_back(input.get());
 			reportsError<StringError>(
 				errOut,
+				CodeRange{ startPos, input.currentCodePos() },
 				"Exponent part of number literal " + buffer + " has no digit.",
 				"Exponent has no digit."
 			);
@@ -299,6 +302,7 @@ namespace {
 			) {
 				reportsError<StringError>(
 					errOut,
+					CodeRange{ startPos, input.currentCodePos() },
 					"Invalid octal number.",
 					"Invalid octal number."
 				);
@@ -334,6 +338,7 @@ namespace {
 			while (std::isalnum(input.peek())) buffer.push_back(input.get());
 			reportsError<StringError>(
 				errOut,
+				CodeRange{ startPos, input.currentCodePos() },
 				"Hexadecimal floating point " + buffer + " has no exponent part.",
 				"Hex float has no exponent part."
 			);
@@ -359,6 +364,7 @@ constexpr std::optional<CharSequenceLiteralPrefix> getCharSequencePrefix(const s
 
 // Scan the body of a char sequence (a string literal or a character literal)
 void Lexer::scanCharSequenceContent(const char quote, std::string* output) {
+	const auto startPos = input.currentCodePos();
 	input.ignore(); // ignore starting quote
 
 	while (!input.reachedEndOfInput() && input.peek() != quote && input.peek() != '\n') {
@@ -373,6 +379,7 @@ void Lexer::scanCharSequenceContent(const char quote, std::string* output) {
 	if (input.reachedEndOfInput() || input.peek() == '\n') {
 		reportsError<StringError>(
 			errOut,
+			CodeRange{ startPos, input.currentCodePos() },
 			quote == '"'
 				? "The string literal has no ending quote."
 				: "The character literal has no ending quote.",
@@ -384,7 +391,7 @@ void Lexer::scanCharSequenceContent(const char quote, std::string* output) {
 	input.ignore(); // ignore the ending quote
 }
 
-std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string& prefixStr) {
+std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string& prefixStr, const CodePos& startPos) {
 	if (auto prefix = getCharSequencePrefix(prefixStr)) {
 		std::string buffer;
 		scanCharSequenceContent(quote, &buffer);
@@ -395,6 +402,7 @@ std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string
 		scanCharSequenceContent(quote, nullptr);
 		reportsError<StringError>(
 			errOut,
+			CodeRange{ startPos, input.currentCodePos() },
 			quote == '"'
 				? "\"" + prefixStr + "\" is not a valid prefix for a string literal."
 				: "\"" + prefixStr + "\" is not a valid prefix for a character literal.",
@@ -441,10 +449,11 @@ std::optional<Token> Lexer::next()
 	}
 
 	if (std::isalpha(input.peek()) || input.peek() == '_') {
+		auto startPos = input.currentCodePos();
 		auto buffer = readIdentString();
 
 		if (input.peek() == '"' || input.peek() == '\'') {
-			return scanCharSequence(input.peek(), buffer);
+			return scanCharSequence(input.peek(), buffer, startPos);
 		}
 		if (auto result = findKeyword(buffer)) {
 			return *result;
@@ -476,9 +485,13 @@ std::optional<Token> Lexer::next()
 		return punctuator;
 	}
 
+	auto startPosOfStrayChar = input.currentCodePos();
+	auto strayChar = input.get();
+
 	reportsError<StringError>(
 		errOut,
-		std::string("Stray \"") + (char) input.peek() + "\" in program.",
+		CodeRange{ startPosOfStrayChar, input.currentCodePos() },
+		std::string("Stray \"") + (char) strayChar + "\" in program.",
 		"Invalid character."
 	);
 

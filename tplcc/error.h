@@ -34,15 +34,14 @@ public:
 };
 
 struct IReportError {
-    virtual void reportsError(std::unique_ptr<Error> error) = 0;
+    virtual void reportsError(std::unique_ptr<Error> error, CodeRange pos) = 0;
     virtual ~IReportError() = default;
 };
 
 template<typename T, typename... Args>
-void reportsError(IReportError& errOut, Args&&... args) {
-    errOut.reportsError(std::make_unique<T>(std::forward<Args>(args)...));
+void reportsError(IReportError& errOut, CodeRange pos, Args&&... args) {
+    errOut.reportsError(std::make_unique<T>(std::forward<Args>(args)...), pos);
 }
-
 
 /* 
 We can devide errors in a programme into two kinds:
@@ -153,7 +152,7 @@ public:
         IGetText& objGetText
     ) : filename(filename), objGetText(objGetText) {}
 
-    void reportsError(std::unique_ptr<Error> error);
+    void reportsError(std::unique_ptr<Error> error, CodePos pos);
     void outputErrorMessagesTo(std::ostream& os);
 };
 
