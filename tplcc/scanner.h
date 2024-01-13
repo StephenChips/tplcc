@@ -3,23 +3,7 @@
 
 #include <vector>
 #include <string>
-
-struct CodePos {
-	size_t lineNumber;
-	size_t charOffset;
-	bool operator==(const CodePos&) const = default;
-};
-
-struct CodeRange {
-	CodePos start, end;
-	bool operator==(const CodeRange&) const = default;
-};
-
-struct IGetText {
-	virtual std::string getText(size_t startLine, size_t endLine) = 0;
-	virtual std::string getText(size_t line) { return this->getText(line, line); }
-	~IGetText() = default;
-};
+#include <cstdint>
 
 struct IScanner {
 	virtual int get() = 0;
@@ -28,18 +12,14 @@ struct IScanner {
 	virtual void ignore() = 0;
 	virtual void ignoreN(size_t n) = 0;
 	virtual bool reachedEndOfInput() = 0;
-	virtual size_t numberOfConsumedChars() = 0;
-	virtual CodePos currentCodePos() = 0;
-	virtual size_t currentCharOffset() = 0;
-	virtual size_t currentLineNumber() = 0;
+	virtual std::uint32_t offset() = 0;
 	virtual ~IScanner() = default;
 };
 
 
-class TextScanner : public IScanner, IGetText {
+class TextScanner : public IScanner {
 	const std::string input;
 	size_t cursor = 0;
-	CodePos pos{0, 0};
 	std::vector<size_t> startOfLineIndice;
 public:
 	TextScanner(std::string input);
@@ -49,14 +29,7 @@ public:
 	virtual void ignore() override;
 	virtual void ignoreN(size_t n) override;
 	virtual bool reachedEndOfInput() override;
-	virtual size_t numberOfConsumedChars() override;
-	virtual CodePos currentCodePos() override;
-	virtual size_t currentCharOffset() override;
-	virtual size_t currentLineNumber() override;
-	virtual std::string getText(size_t startLine, size_t endLine) override;
-private:
-	bool enteredNextLine();
-	void findAndRecordStartOfLineIndice();
+	virtual std::uint32_t offset() override;
 };
 
 #endif // !TPLCC_SCANNER_H

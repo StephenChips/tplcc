@@ -120,16 +120,16 @@ using Token = std::variant<
 
 class Lexer {
 private:
-	IScanner& input;
+	IScanner& scanner;
 	IReportError& errOut;
 public:
-	Lexer(IScanner& is, IReportError& errOut): input(is), errOut(errOut){}
+	Lexer(IScanner& is, IReportError& errOut): scanner(is), errOut(errOut){}
 	std::optional<Token> next();
 private:
 	std::string readIdentString();
 	std::optional<Keyword> findKeyword(const std::string& str);
 	void scanCharSequenceContent(const char quote, std::string* output);
-	std::optional<Token> scanCharSequence(const char quote, const std::string& prefix, const CodePos& startPos = {});
+	std::optional<Token> scanCharSequence(const char quote, const std::string& prefix, const std::uint32_t startOffset = 0);
 	std::optional<Token> scanPunctuator();
 };
 

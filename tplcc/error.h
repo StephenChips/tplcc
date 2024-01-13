@@ -6,42 +6,36 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <cstdint>
 
 #include "scanner.h"
 
 class Error {
-public:
-    Error() = default;
-    virtual ~Error() = default;
-    virtual std::string hint() { return ""; }
-    virtual std::string errorMessage() {  return ""; }
-};
-
-class StringError : public Error {
     std::string msg;
     std::string hintMsg;
+    std::tuple<std::uint32_t, std::uint32_t> range;
 
 public:
-    StringError(std::string msg, std::string hintMsg = "") : msg(msg), hintMsg(hintMsg) {}
+    Error(std::tuple<std::uint32_t, std::uint32_t> range, std::string msg, std::string hintMsg = "")
+        : range(range), msg(std::move(msg)), hintMsg(std::move(hintMsg)) {}
 
-    std::string hint() {
+    std::string hint() const {
         return hintMsg;
     }
 
-    std::string errorMessage() {
+    std::string errorMessage() const {
         return msg;
+    }
+
+    std::tuple<std::uint32_t, std::uint32_t> codeRange() const {
+        return range;
     }
 };
 
 struct IReportError {
-    virtual void reportsError(std::unique_ptr<Error> error, CodeRange pos) = 0;
+    virtual void reportsError(Error error) = 0;
     virtual ~IReportError() = default;
 };
-
-template<typename T, typename... Args>
-void reportsError(IReportError& errOut, CodeRange pos, Args&&... args) {
-    errOut.reportsError(std::make_unique<T>(std::forward<Args>(args)...), pos);
-}
 
 /* 
 
@@ -116,15 +110,13 @@ foo.c: Undefined varaible "abc"
 class ErrorReporter: IReportError {
     std::string filename;
     std::vector<Error> listOfErrors;
-    IGetText& objGetText;
 public:
     ErrorReporter(
         std::string filename,
-        std::ostream& outStream,
-        IGetText& objGetText
-    ) : filename(filename), objGetText(objGetText) {}
+        std::ostream& outStream
+    ) : filename(filename) {}
 
-    void reportsError(std::unique_ptr<Error> error, CodePos pos);
+    void reportsError(Error error);
     void outputErrorMessagesTo(std::ostream& os);
 };
 

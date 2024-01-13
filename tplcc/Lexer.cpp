@@ -149,20 +149,20 @@ namespace {
 			return ch == 'p' || ch == 'P';
 		}
 	}
-	
+
 	class NumberLiteralScanner {
 		std::string buffer;
-		IScanner& input;
-		IReportError &errOut;
-		std::vector<std::unique_ptr<Error>> listOfErrors; 
-		CodePos startPos;
+		IScanner& scanner;
+		IReportError& errOut;
+		std::vector<std::unique_ptr<Error>> listOfErrors;
+		uint32_t startOffset;
 
 	public:
-		NumberLiteralScanner(IScanner& input, IReportError& errOut)
-			: input(input), errOut(errOut), startPos(input.currentCodePos()) {};
+		NumberLiteralScanner(IScanner& s, IReportError& e)
+			: scanner(s), errOut(e), startOffset(s.offset()) {};
 		std::optional<NumberLiteral> scan();
 	private:
-		
+
 		// Following functions will return false if they find errors when scanning.
 		bool scanSuffixes(std::initializer_list<const std::vector<std::string>*> availableSuffixes);
 		bool scanIntegerSuffixes();
@@ -176,8 +176,8 @@ namespace {
 		std::vector<bool> hasSeenSuffix(availableSuffixes.size(), false);
 
 		size_t beginIndexOfSuffix = buffer.size();
-		while (std::isalpha(input.peek())) {
-			buffer.push_back(input.get());
+		while (std::isalpha(scanner.peek())) {
+			buffer.push_back(scanner.get());
 		}
 
 		for (size_t i = beginIndexOfSuffix; i < buffer.size();) {
@@ -204,12 +204,11 @@ namespace {
 	fail:
 		const auto numberLiteralNoSuffix = buffer.substr(0, beginIndexOfSuffix);
 		const auto invalidSuffix = buffer.substr(beginIndexOfSuffix);
-		reportsError<StringError>(
-			errOut,
-			CodeRange { startPos, input.currentCodePos()},
+		errOut.reportsError({
+			{ startOffset, scanner.offset()},
 			"\"" + invalidSuffix + "\" is not a valid suffix for the number literal " + numberLiteralNoSuffix + ".",
 			"invalid suffix."
-		);
+			});
 		return false;
 	}
 
@@ -224,25 +223,24 @@ namespace {
 	bool NumberLiteralScanner::scanExponentPart() {
 		bool exponentHasNoDigit = true;
 
-		buffer.push_back(input.get()); // read the 'e'/'E'/'p'/'P' at the beginning
+		buffer.push_back(scanner.get()); // read the 'e'/'E'/'p'/'P' at the beginning
 
-		if (input.peek() == '+' || input.peek() == '-') {
-			buffer.push_back(input.get());
+		if (scanner.peek() == '+' || scanner.peek() == '-') {
+			buffer.push_back(scanner.get());
 		}
 
-		while (std::isdigit(input.peek())) {
-			buffer.push_back(input.get());
+		while (std::isdigit(scanner.peek())) {
+			buffer.push_back(scanner.get());
 			exponentHasNoDigit = false;
 		}
 
 		if (exponentHasNoDigit) {
-			while (std::isalnum(input.peek())) buffer.push_back(input.get());
-			reportsError<StringError>(
-				errOut,
-				CodeRange{ startPos, input.currentCodePos() },
+			while (std::isalnum(scanner.peek())) buffer.push_back(scanner.get());
+			errOut.reportsError({
+				{ startOffset, scanner.offset() },
 				"Exponent part of number literal " + buffer + " has no digit.",
 				"Exponent has no digit."
-			);
+				});
 			return false;
 		}
 		else {
@@ -271,11 +269,11 @@ namespace {
 		buffer.clear();
 
 		// Exam if it's a hexadecimal number.
-		if (input.peek() == '0') {
-			buffer.push_back(input.get());
+		if (scanner.peek() == '0') {
+			buffer.push_back(scanner.get());
 
-			if (input.peek() == 'x' || input.peek() == 'X') {
-				buffer.push_back(input.get());
+			if (scanner.peek() == 'x' || scanner.peek() == 'X') {
+				buffer.push_back(scanner.get());
 				numberBase = LiteralNumberBase::Hexadecimal;
 			}
 		}
@@ -285,27 +283,26 @@ namespace {
 		// e.g. 0987.654 is a valid number. We should keep scanning digits until we
 		// meet a non-digit, then we can drop a conclusion.
 
-		while (isValidDigit(input.peek(), numberBase)) {
-			buffer.push_back(input.get());
+		while (isValidDigit(scanner.peek(), numberBase)) {
+			buffer.push_back(scanner.get());
 			hasIntegerPart = true;
 		}
 
 		// This branch handles literals that only have the integer part.
-		if (input.peek() != '.') {
-			if (isFirstCharOfExponentPart(input.peek(), numberBase)) {
+		if (scanner.peek() != '.') {
+			if (isFirstCharOfExponentPart(scanner.peek(), numberBase)) {
 				return scanAndCreateFloatLiteral(true);
 			}
 
-			if (buffer[0] == '0' && 
-				numberBase != LiteralNumberBase::Hexadecimal && 
+			if (buffer[0] == '0' &&
+				numberBase != LiteralNumberBase::Hexadecimal &&
 				std::any_of(buffer.begin(), buffer.end(), std::not_fn(isOctalDigit))
-			) {
-				reportsError<StringError>(
-					errOut,
-					CodeRange{ startPos, input.currentCodePos() },
+				) {
+				errOut.reportsError({
+					{ startOffset, scanner.offset() },
 					"Invalid octal number.",
 					"Invalid octal number."
-				);
+					});
 				return std::nullopt;
 			}
 
@@ -322,26 +319,25 @@ namespace {
 		// we call the function even when the current character isn't a digit nor a '.',
 		// which is garentee not gonna happen.
 
-		buffer.push_back(input.get()); // read the decimal point
+		buffer.push_back(scanner.get()); // read the decimal point
 
 		// Read the fraction part.
-		while (isValidDigit(input.peek(), numberBase)) {
-			buffer.push_back(input.get());
+		while (isValidDigit(scanner.peek(), numberBase)) {
+			buffer.push_back(scanner.get());
 			hasFractionPart = true;
 		}
 
 		// We will not meet invalid case like .e10f, .ll, .ace (!hasIntegerPart && !hasFractionPart)
 
-		const bool hasExponentPart = isFirstCharOfExponentPart(input.peek(), numberBase);
+		const bool hasExponentPart = isFirstCharOfExponentPart(scanner.peek(), numberBase);
 
 		if (numberBase == LiteralNumberBase::Hexadecimal && !hasExponentPart) {
-			while (std::isalnum(input.peek())) buffer.push_back(input.get());
-			reportsError<StringError>(
-				errOut,
-				CodeRange{ startPos, input.currentCodePos() },
+			while (std::isalnum(scanner.peek())) buffer.push_back(scanner.get());
+			errOut.reportsError({
+				{ startOffset, scanner.offset() },
 				"Hexadecimal floating point " + buffer + " has no exponent part.",
 				"Hex float has no exponent part."
-			);
+				});
 			return std::nullopt;
 		}
 
@@ -364,34 +360,33 @@ constexpr std::optional<CharSequenceLiteralPrefix> getCharSequencePrefix(const s
 
 // Scan the body of a char sequence (a string literal or a character literal)
 void Lexer::scanCharSequenceContent(const char quote, std::string* output) {
-	const auto startPos = input.currentCodePos();
-	input.ignore(); // ignore starting quote
+	const auto startOffset = scanner.offset();
+	scanner.ignore(); // ignore starting quote
 
-	while (!input.reachedEndOfInput() && input.peek() != quote && input.peek() != '\n') {
-		if (input.peek() == '\\') { // skip if it's a escaping.
-			int ch = input.get();
+	while (!scanner.reachedEndOfInput() && scanner.peek() != quote && scanner.peek() != '\n') {
+		if (scanner.peek() == '\\') { // skip if it's a escaping.
+			int ch = scanner.get();
 			if (output) output->push_back(ch);
 		}
-		int ch = input.get();
+		int ch = scanner.get();
 		if (output) output->push_back(ch);
 	}
 
-	if (input.reachedEndOfInput() || input.peek() == '\n') {
-		reportsError<StringError>(
-			errOut,
-			CodeRange{ startPos, input.currentCodePos() },
+	if (scanner.reachedEndOfInput() || scanner.peek() == '\n') {
+		errOut.reportsError({
+			{ startOffset, scanner.offset() },
 			quote == '"'
 				? "The string literal has no ending quote."
 				: "The character literal has no ending quote.",
 			"No ending quote."
-		);
+			});
 		throw std::exception("Irrecoverable error happened, compilation is interrupted.");
 	}
 
-	input.ignore(); // ignore the ending quote
+	scanner.ignore(); // ignore the ending quote
 }
 
-std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string& prefixStr, const CodePos& startPos) {
+std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string& prefixStr, const std::uint32_t startOffset) {
 	if (auto prefix = getCharSequencePrefix(prefixStr)) {
 		std::string buffer;
 		scanCharSequenceContent(quote, &buffer);
@@ -400,14 +395,13 @@ std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string
 	}
 	else {
 		scanCharSequenceContent(quote, nullptr);
-		reportsError<StringError>(
-			errOut,
-			CodeRange{ startPos, input.currentCodePos() },
+		errOut.reportsError({
+			{ startOffset, scanner.offset() },
 			quote == '"'
 				? "\"" + prefixStr + "\" is not a valid prefix for a string literal."
 				: "\"" + prefixStr + "\" is not a valid prefix for a character literal.",
 			"Invalid prefix."
-		);
+			});
 		return std::nullopt;
 	}
 }
@@ -416,9 +410,9 @@ std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string
 std::optional<Token> Lexer::scanPunctuator()
 {
 	for (const auto& punct : ALL_PUNCTUATORS) {
-		const auto lookahead = input.peekN(punct.str.size());
+		const auto lookahead = scanner.peekN(punct.str.size());
 		if (punct.str == std::string(lookahead.begin(), lookahead.end())) {
-			input.ignoreN(punct.str.size());
+			scanner.ignoreN(punct.str.size());
 			return punct;
 		}
 	}
@@ -429,31 +423,31 @@ std::optional<Token> Lexer::scanPunctuator()
 // Get the next token from given input stream.
 std::optional<Token> Lexer::next()
 {
-	while (std::isspace(input.peek())) input.ignore();
+	while (std::isspace(scanner.peek())) scanner.ignore();
 
-	if (input.reachedEndOfInput()) return EOI;
+	if (scanner.reachedEndOfInput()) return EOI;
 
-	if (input.peekN(2) == std::vector<int>{'/', '/'}) {
-		input.ignoreN(2);
-		while (!input.reachedEndOfInput() && input.peek() != '\n') input.ignore();
-		input.ignore();
+	if (scanner.peekN(2) == std::vector<int>{'/', '/'}) {
+		scanner.ignoreN(2);
+		while (!scanner.reachedEndOfInput() && scanner.peek() != '\n') scanner.ignore();
+		scanner.ignore();
 		return next();
 	}
 
-	if (input.peekN(2) == std::vector<int>{'/', '*'}) {
-		input.ignoreN(2);
+	if (scanner.peekN(2) == std::vector<int>{'/', '*'}) {
+		scanner.ignoreN(2);
 		std::vector<int> endOfComment{ '*', '/' };
-		while (!input.reachedEndOfInput() && input.peekN(2) != endOfComment) input.ignore();
-		input.ignoreN(2);
+		while (!scanner.reachedEndOfInput() && scanner.peekN(2) != endOfComment) scanner.ignore();
+		scanner.ignoreN(2);
 		return next();
 	}
 
-	if (std::isalpha(input.peek()) || input.peek() == '_') {
-		auto startPos = input.currentCodePos();
+	if (std::isalpha(scanner.peek()) || scanner.peek() == '_') {
+		auto startOffset = scanner.offset();
 		auto buffer = readIdentString();
 
-		if (input.peek() == '"' || input.peek() == '\'') {
-			return scanCharSequence(input.peek(), buffer, startPos);
+		if (scanner.peek() == '"' || scanner.peek() == '\'') {
+			return scanCharSequence(scanner.peek(), buffer, startOffset);
 		}
 		if (auto result = findKeyword(buffer)) {
 			return *result;
@@ -461,39 +455,38 @@ std::optional<Token> Lexer::next()
 
 		return Identifier{ std::move(buffer) };
 	}
-	
-	if (input.peek() == '"' || input.peek() == '\'') {
-		return scanCharSequence(input.peek(), "");
+
+	if (scanner.peek() == '"' || scanner.peek() == '\'') {
+		return scanCharSequence(scanner.peek(), "");
 	}
 
-	auto lookaheads = input.peekN(2);
+	auto lookaheads = scanner.peekN(2);
 	if (lookaheads[0] == '.') {
 		if (std::isdigit(lookaheads[1])) {
-			return NumberLiteralScanner(input, errOut).scan();
+			return NumberLiteralScanner(scanner, errOut).scan();
 		}
 		else {
-			input.ignore();
+			scanner.ignore();
 			return Punctuator{ "." };
 		}
 	}
 
-	if (std::isdigit(input.peek())) {
-		return NumberLiteralScanner(input, errOut).scan();
+	if (std::isdigit(scanner.peek())) {
+		return NumberLiteralScanner(scanner, errOut).scan();
 	}
 
 	if (auto punctuator = scanPunctuator()) {
 		return punctuator;
 	}
 
-	auto startPosOfStrayChar = input.currentCodePos();
-	auto strayChar = input.get();
+	auto startOffsetOfStrayChar = scanner.offset();
+	auto strayChar = scanner.get();
 
-	reportsError<StringError>(
-		errOut,
-		CodeRange{ startPosOfStrayChar, input.currentCodePos() },
-		std::string("Stray \"") + (char) strayChar + "\" in program.",
+	errOut.reportsError({
+		{ startOffsetOfStrayChar, scanner.offset() },
+		std::string("Stray \"") + (char)strayChar + "\" in program.",
 		"Invalid character."
-	);
+		});
 
 	throw std::exception(); // report errors and abort if there is invalid character in the source code. e.g. ` and @.
 }
@@ -502,8 +495,8 @@ std::string Lexer::readIdentString()
 {
 	std::string buffer;
 
-	while (std::isdigit(input.peek()) || std::isalpha(input.peek()) || input.peek() == '_') {
-		buffer.push_back(input.get());
+	while (std::isdigit(scanner.peek()) || std::isalpha(scanner.peek()) || scanner.peek() == '_') {
+		buffer.push_back(scanner.get());
 	}
 
 	return buffer;

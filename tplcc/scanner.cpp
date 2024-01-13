@@ -1,30 +1,19 @@
 #include <vector>
+#include <cstdint>
 
 #include "scanner.h"
 
-TextScanner::TextScanner(std::string _input) : input(std::move(_input)) {
-	findAndRecordStartOfLineIndice();
-}
+SimpleStringScanner::SimpleStringScanner(std::string _input) : input(std::move(_input)) {}
 
-int TextScanner::get() {
-	auto lookaheads = peekN(2);
-
-	if (enteredNextLine()) {
-		pos.lineNumber++;
-		pos.charOffset = 0;
-	}
-	else {
-		pos.charOffset++;
-	}
-
+int SimpleStringScanner::get() {
 	return reachedEndOfInput() ? EOF : input[cursor++];
 }
 
-int TextScanner::peek() {
+int SimpleStringScanner::peek() {
 	return reachedEndOfInput() ? EOF : input[cursor];
 }
 
-std::vector<int> TextScanner::peekN(size_t n) {
+std::vector<int> SimpleStringScanner::peekN(size_t n) {
 	std::vector<int> output;
 
 	for (size_t i = 0; i < n; i++) {
@@ -38,64 +27,19 @@ std::vector<int> TextScanner::peekN(size_t n) {
 	return output;
 }
 
-void TextScanner::ignore() {
+void SimpleStringScanner::ignore() {
 	get();
 }
 
-void TextScanner::ignoreN(size_t n) {
+void SimpleStringScanner::ignoreN(size_t n) {
 	for (size_t i = 0; !reachedEndOfInput() && i < n; i++) {
 		get();
 	}
 }
-bool TextScanner::reachedEndOfInput() {
+bool SimpleStringScanner::reachedEndOfInput() {
 	return cursor == input.size();
 }
 
-size_t TextScanner::numberOfConsumedChars() {
+std::uint32_t SimpleStringScanner::offset() {
 	return cursor;
-}
-
-CodePos TextScanner::currentCodePos() {
-	return pos;
-}
-
-size_t TextScanner::currentLineNumber() {
-	return pos.lineNumber;
-}
-
-size_t TextScanner::currentCharOffset() {
-	return pos.charOffset;
-}
-
-bool TextScanner::enteredNextLine() {
-	if (cursor == 0) return false;
-	auto previousChar = input[cursor - 1];
-	return previousChar == '\r' || previousChar == '\n';
-}
-
-std::string TextScanner::getText(size_t startLine, size_t endLine) {
-	auto from = startOfLineIndice[startLine];
-	auto count = startOfLineIndice[endLine + 1] - from;
-	return input.substr(from, count);
-}
-
-void TextScanner::findAndRecordStartOfLineIndice() {
-	startOfLineIndice.push_back(0);
-
-	for (size_t i = 0; i < input.size();) {
-		if (input[i] == '\r') {
-			i++;
-			if (i < input.size() && input[i] == '\n') {
-				i++;
-			}
-			startOfLineIndice.push_back(i);
-		}
-		else if (input[i] == '\n') {
-			i++;
-			startOfLineIndice.push_back(i);
-		}
-		else {
-			i++;
-		}
-	}
 }
