@@ -6,6 +6,64 @@
 #include "../tplcc/scanner.h"
 #include "../tplcc/Lexer.h"
 
+// A simple string scanner only for testing.
+class SimpleStringScanner : public IScanner {
+	const std::string input;
+	size_t cursor = 0;
+	std::vector<size_t> startOfLineIndice;
+public:
+	SimpleStringScanner(std::string input);
+	virtual int get() override;
+	virtual int peek() override;
+	virtual std::vector<int> peekN(size_t n) override;
+	virtual void ignore() override;
+	virtual void ignoreN(size_t n) override;
+	virtual bool reachedEndOfInput() override;
+	virtual std::uint32_t offset() override;
+};
+
+SimpleStringScanner::SimpleStringScanner(std::string _input) : input(std::move(_input)) {}
+
+int SimpleStringScanner::get() {
+	return reachedEndOfInput() ? EOF : input[cursor++];
+}
+
+int SimpleStringScanner::peek() {
+	return reachedEndOfInput() ? EOF : input[cursor];
+}
+
+std::vector<int> SimpleStringScanner::peekN(size_t n) {
+	std::vector<int> output;
+
+	for (size_t i = 0; i < n; i++) {
+		if (cursor + i >= input.size()) {
+			output.push_back(EOF);
+		}
+		else {
+			output.push_back(input[cursor + i]);
+		}
+	}
+	return output;
+}
+
+void SimpleStringScanner::ignore() {
+	get();
+}
+
+void SimpleStringScanner::ignoreN(size_t n) {
+	for (size_t i = 0; !reachedEndOfInput() && i < n; i++) {
+		get();
+	}
+}
+bool SimpleStringScanner::reachedEndOfInput() {
+	return cursor == input.size();
+}
+
+std::uint32_t SimpleStringScanner::offset() {
+	return cursor;
+}
+
+
 template<typename T>
 bool operator==(const Token& token, const T& literal) {
 	if (auto lit = std::get_if<T>(&token)) {
@@ -26,7 +84,7 @@ struct ReportErrorStub : IReportError {
 
 void testStringLiteral(const std::string& str, const std::string& expectedContent, const CharSequenceLiteralPrefix expectedPrefix) {
 	ReportErrorStub errOut;
-	TextScanner li(str + "    ");
+	SimpleStringScanner li(str + "    ");
 	Lexer lexer(li, errOut);
 
 	auto result = lexer.next();
@@ -39,7 +97,7 @@ void testStringLiteral(const std::string& str, const std::string& expectedConten
 
 void testCharacterLiteral(const std::string& str, const std::string& expectedContent, const CharSequenceLiteralPrefix expectedPrefix) {
 	ReportErrorStub errOut;
-	TextScanner li(str + "    ");
+	SimpleStringScanner li(str + "    ");
 	Lexer lexer(li, errOut);
 
 	auto result = lexer.next();
@@ -52,7 +110,7 @@ void testCharacterLiteral(const std::string& str, const std::string& expectedCon
 
 void testInvalidStringPrefix(const std::string& prefix) {
 	ReportErrorStub errOut;
-	TextScanner li(std::format("      {}\"hello\"", prefix));
+	SimpleStringScanner li(std::format("      {}\"hello\"", prefix));
 	Lexer lexer(li, errOut);
 
 	errOut.listOfErrors.clear();
@@ -71,7 +129,7 @@ void testInvalidStringPrefix(const std::string& prefix) {
 // programmer fixes the bugs and let him re-run the compiler.
 void testStringMissEndingQuote(const std::string& str) {
 	ReportErrorStub errOut;
-	TextScanner li(str);
+	SimpleStringScanner li(str);
 	Lexer lexer(li, errOut);
 
 	try {
@@ -89,7 +147,7 @@ void testStringMissEndingQuote(const std::string& str) {
 // like string misses its ending quote, we throw an exception here too.
 void testCharacterMissEndingQuote(const std::string& str) {
 	ReportErrorStub errOut;
-	TextScanner li(str);
+	SimpleStringScanner li(str);
 	Lexer lexer(li, errOut);
 
 	try {
@@ -107,7 +165,7 @@ void testCharacterMissEndingQuote(const std::string& str) {
 void testInvalidCharacterPrefix(const std::string& prefix) {
 	ReportErrorStub errOut;
 	auto strOfCharLiteral = prefix + "'0'";
-	TextScanner li(strOfCharLiteral);
+	SimpleStringScanner li(strOfCharLiteral);
 	Lexer lexer(li, errOut);
 
 	errOut.listOfErrors.clear();
@@ -123,7 +181,7 @@ void testInvalidCharacterPrefix(const std::string& prefix) {
 void testInvalidNumberSuffix(std::string numberLiteralNoSuffix, std::string invalidSuffix) {
 	auto invalidNumber = numberLiteralNoSuffix + invalidSuffix;
 	ReportErrorStub errOut;
-	TextScanner li(invalidNumber);
+	SimpleStringScanner li(invalidNumber);
 	Lexer lexer(li, errOut);
 
 	EXPECT_EQ(lexer.next(), std::nullopt);
@@ -153,7 +211,7 @@ TEST(TestLexer, test_keyword) {
 
 	for (size_t i = 0; i < keywordNames.size(); i++) {
 		ReportErrorStub errOut;
-		TextScanner li(keywordNames[i]);
+		SimpleStringScanner li(keywordNames[i]);
 		Lexer lexer(li, errOut);
 		EXPECT_EQ(std::get<Keyword>(*lexer.next()), keywordValues[i]);
 		EXPECT_EQ(li.offset(), keywordNames[i].size());
@@ -171,7 +229,7 @@ TEST(TestLexer, test_identifier) {
 
 	for (const auto& id : identifiers) {
 		ReportErrorStub errOut;
-		TextScanner li(id);
+		SimpleStringScanner li(id);
 		Lexer lexer(li, errOut);
 		EXPECT_EQ(std::get<Identifier>(*lexer.next()), Identifier{ id });
 		EXPECT_EQ(li.offset(), id.size());
@@ -190,7 +248,7 @@ TEST(TestLexer, test_integer) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		ReportErrorStub errOut;
-		TextScanner li(literals[i]);
+		SimpleStringScanner li(literals[i]);
 		Lexer lexer(li, errOut);
 
 		EXPECT_EQ(std::get<NumberLiteral>(*lexer.next()), NumberLiteral{ literals[i] });
@@ -213,7 +271,7 @@ TEST(TestLexer, test_decimal_floating_numbers) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		ReportErrorStub errOut;
-		TextScanner li(literals[i]);
+		SimpleStringScanner li(literals[i]);
 		Lexer lexer(li, errOut);
 		EXPECT_EQ(std::get<NumberLiteral>(*lexer.next()), NumberLiteral{ literals[i] });
 	}
@@ -234,7 +292,7 @@ TEST(TestLexer, test_hexadecimal_floating_numbers) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		ReportErrorStub errOut;
-		TextScanner li(literals[i]);
+		SimpleStringScanner li(literals[i]);
 		Lexer lexer(li, errOut);
 		EXPECT_EQ(std::get<NumberLiteral>(*lexer.next()), NumberLiteral{ literals[i] });
 	}
@@ -256,7 +314,7 @@ TEST(TestLexer, test_lexer_error_exponent_has_no_digit) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		ReportErrorStub errOut;
-		TextScanner li(literals[i]);
+		SimpleStringScanner li(literals[i]);
 		Lexer lexer(li, errOut);
 
 		EXPECT_EQ(lexer.next(), std::nullopt);
@@ -279,7 +337,7 @@ TEST(TestLexer, test_lexer_error_hex_float_has_no_exponent) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		ReportErrorStub errOut;
-		TextScanner li(literals[i] + "      ");
+		SimpleStringScanner li(literals[i] + "      ");
 		Lexer lexer(li, errOut);
 
 		EXPECT_EQ(lexer.next(), std::nullopt);
@@ -302,7 +360,7 @@ TEST(TestLexer, test_lexer_error_invalid_octal_number) {
 
 	for (size_t i = 0; i < literals.size(); i++) {
 		ReportErrorStub errOut;
-		TextScanner li(literals[i] + "      ");
+		SimpleStringScanner li(literals[i] + "      ");
 		Lexer lexer(li, errOut);
 
 		EXPECT_EQ(lexer.next(), std::nullopt);
@@ -438,7 +496,7 @@ TEST(TestLexer, test_character_literal) {
 
 TEST(TestLexer, testSingleLineComment) {
 	ReportErrorStub errOut;
-	TextScanner li("// hello, world.         ");
+	SimpleStringScanner li("// hello, world.         ");
 	Lexer lexer(li, errOut);
 
 	EXPECT_EQ(*lexer.next(), EOI);
@@ -448,7 +506,7 @@ TEST(TestLexer, testSingleLineComment) {
 
 TEST(TestLexer, testSingleLineCommentFollowsAToken) {
 	ReportErrorStub errOut;
-	TextScanner li("313 // THIS IS A INTEGER");
+	SimpleStringScanner li("313 // THIS IS A INTEGER");
 	Lexer lexer(li, errOut);
 
 	EXPECT_EQ(*lexer.next(), NumberLiteral{ "313" });
@@ -464,7 +522,7 @@ TEST(TestLexer, commented_out_tokens_is_ignored) {
 
 	for (const auto& str : inputs) {
 		ReportErrorStub errOut;
-		TextScanner li(str);
+		SimpleStringScanner li(str);
 		Lexer lexer(li, errOut);
 
 		EXPECT_EQ(*lexer.next(), EOI);
@@ -474,7 +532,7 @@ TEST(TestLexer, commented_out_tokens_is_ignored) {
 
 TEST(TestLexer, token_at_the_next_line_of_the_single_line_comment_should_be_scanned) {
 	ReportErrorStub errOut;
-	TextScanner li(
+	SimpleStringScanner li(
 		"//INT\r\n"
 		"313\r\n"
 	);
@@ -487,7 +545,7 @@ TEST(TestLexer, token_at_the_next_line_of_the_single_line_comment_should_be_scan
 
 TEST(TestLexer, test_comment) {
 	ReportErrorStub errOut;
-	TextScanner li("/* comment */  ");
+	SimpleStringScanner li("/* comment */  ");
 	Lexer lexer(li, errOut);
 
 	EXPECT_EQ(*lexer.next(), EOI);
@@ -497,7 +555,7 @@ TEST(TestLexer, test_comment) {
 
 TEST(TestLexer, test_comment_surrounded_by_tokens) {
 	ReportErrorStub errOut;
-	TextScanner li("313 /* comment */ foo   ");
+	SimpleStringScanner li("313 /* comment */ foo   ");
 	Lexer lexer(li, errOut);
 
 	EXPECT_EQ(*lexer.next(), NumberLiteral{ "313" });
@@ -508,7 +566,7 @@ TEST(TestLexer, test_comment_surrounded_by_tokens) {
 
 TEST(TestLexer, test_comment_spans_across_multiple_lines) {
 	ReportErrorStub errOut;
-	TextScanner li("313 /* <- A INT \r\n A IDENTIFIER . */ foo   ");
+	SimpleStringScanner li("313 /* <- A INT \r\n A IDENTIFIER . */ foo   ");
 	Lexer lexer(li, errOut);
 
 	EXPECT_EQ(*lexer.next(), NumberLiteral{ "313" });
@@ -528,7 +586,7 @@ TEST(TestLexer, test_punctuators) {
 		", <: :> <% %>";
 
 	ReportErrorStub errOut;
-	TextScanner li(inputStr);
+	SimpleStringScanner li(inputStr);
 	Lexer lexer(li, errOut);
 
 	std::istringstream iss(inputStr);
@@ -548,7 +606,7 @@ TEST(TestLexer, test_punctuators) {
 
 TEST(TestLexer, test_dot_that_followed_by_another_token) {
 	ReportErrorStub errOut;
-	TextScanner li(".e10f");
+	SimpleStringScanner li(".e10f");
 	Lexer lexer(li, errOut);
 	EXPECT_EQ(std::get<Punctuator>(*lexer.next()), Punctuator{ "." });
 	EXPECT_EQ(std::get<Identifier>(*lexer.next()), Identifier{ "e10f" });
@@ -558,7 +616,7 @@ TEST(TestLexer, test_dot_that_followed_by_another_token) {
 TEST(TestLexer, test_invalid_characters) {
 	auto invalidCharacters = std::string{ "`@" };
 	ReportErrorStub errOut;
-	TextScanner li(invalidCharacters);
+	SimpleStringScanner li(invalidCharacters);
 	Lexer lexer(li, errOut);
 
 	for (size_t i = 0; i < invalidCharacters.size(); i++) {
