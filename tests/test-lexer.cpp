@@ -3,66 +3,10 @@
 #include <gtest/gtest.h>
 #include <format>
 
-#include "../tplcc/scanner.h"
-#include "../tplcc/Lexer.h"
-
-// A simple string scanner only for testing.
-class SimpleStringScanner : public IScanner {
-	const std::string input;
-	size_t cursor = 0;
-	std::vector<size_t> startOfLineIndice;
-public:
-	SimpleStringScanner(std::string input);
-	virtual int get() override;
-	virtual int peek() override;
-	virtual std::vector<int> peekN(size_t n) override;
-	virtual void ignore() override;
-	virtual void ignoreN(size_t n) override;
-	virtual bool reachedEndOfInput() override;
-	virtual std::uint32_t offset() override;
-};
-
-SimpleStringScanner::SimpleStringScanner(std::string _input) : input(std::move(_input)) {}
-
-int SimpleStringScanner::get() {
-	return reachedEndOfInput() ? EOF : input[cursor++];
-}
-
-int SimpleStringScanner::peek() {
-	return reachedEndOfInput() ? EOF : input[cursor];
-}
-
-std::vector<int> SimpleStringScanner::peekN(size_t n) {
-	std::vector<int> output;
-
-	for (size_t i = 0; i < n; i++) {
-		if (cursor + i >= input.size()) {
-			output.push_back(EOF);
-		}
-		else {
-			output.push_back(input[cursor + i]);
-		}
-	}
-	return output;
-}
-
-void SimpleStringScanner::ignore() {
-	get();
-}
-
-void SimpleStringScanner::ignoreN(size_t n) {
-	for (size_t i = 0; !reachedEndOfInput() && i < n; i++) {
-		get();
-	}
-}
-bool SimpleStringScanner::reachedEndOfInput() {
-	return cursor == input.size();
-}
-
-std::uint32_t SimpleStringScanner::offset() {
-	return cursor;
-}
-
+#include "tplcc/scanner.h"
+#include "tplcc/Lexer.h"
+#include "./mocking/simple-string-scanner.h"
+#include "./mocking/report-error-stub.h"
 
 template<typename T>
 bool operator==(const Token& token, const T& literal) {
@@ -73,14 +17,6 @@ bool operator==(const Token& token, const T& literal) {
 		return false;
 	}
 }
-
-struct ReportErrorStub : IReportError {
-	std::vector<Error> listOfErrors{};
-
-	void reportsError(Error error) override {
-		listOfErrors.push_back(std::move(error));
-	}
-};
 
 void testStringLiteral(const std::string& str, const std::string& expectedContent, const CharSequenceLiteralPrefix expectedPrefix) {
 	ReportErrorStub errOut;

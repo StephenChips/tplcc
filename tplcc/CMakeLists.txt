@@ -3,7 +3,7 @@
 #
 
 # Add source to this project's executable.
-add_executable (tplcc "tplcc.cpp" "tplcc.h" "lexer.h" "lexer.cpp"  "error.h"  "scanner.h"  )
+add_executable (tplcc "tplcc.cpp" "tplcc.h" "lexer.h" "lexer.cpp"  "error.h"  "scanner.h" "preprocessor.cpp" "preprocessor.h" "code-buffer.h")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET tplcc PROPERTY CXX_STANDARD 20)

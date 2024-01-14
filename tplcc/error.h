@@ -1,6 +1,6 @@
 
-#ifndef TPLCC_ERROR_REPORTING_H
-#define TPLCC_ERROR_REPORTING_H
+#ifndef TPLCC_ERROR_H
+#define TPLCC_ERROR_H
 
 #include <memory>
 #include <string>
