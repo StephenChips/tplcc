@@ -8,8 +8,8 @@ int SimpleStringScanner::peek() {
 	return reachedEndOfInput() ? EOF : input[cursor];
 }
 
-std::vector<int> SimpleStringScanner::peekN(size_t n) {
-	std::vector<int> output;
+std::string SimpleStringScanner::peekN(size_t n) {
+	std::string output;
 
 	for (size_t i = 0; i < n; i++) {
 		if (cursor + i >= input.size()) {

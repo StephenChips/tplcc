@@ -46,7 +46,7 @@ class Preprocessor : IScanner, IMacroExpansionRecords {
   // Inherited via IScanner
   int get() override;
   int peek() override;
-  std::vector<int> peekN(size_t n) override;
+  std::string peekN(size_t n) override;
   void ignore() override;
   void ignoreN(size_t n) override;
   bool reachedEndOfInput() override;

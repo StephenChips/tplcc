@@ -427,17 +427,16 @@ std::optional<Token> Lexer::next()
 
 	if (scanner.reachedEndOfInput()) return EOI;
 
-	if (scanner.peekN(2) == std::vector<int>{'/', '/'}) {
+	if (scanner.peekN(2) == "//") {
 		scanner.ignoreN(2);
 		while (!scanner.reachedEndOfInput() && scanner.peek() != '\n') scanner.ignore();
 		scanner.ignore();
 		return next();
 	}
 
-	if (scanner.peekN(2) == std::vector<int>{'/', '*'}) {
+	if (scanner.peekN(2) == "/*") {
 		scanner.ignoreN(2);
-		std::vector<int> endOfComment{ '*', '/' };
-		while (!scanner.reachedEndOfInput() && scanner.peekN(2) != endOfComment) scanner.ignore();
+		while (!scanner.reachedEndOfInput() && scanner.peekN(2) != "*/") scanner.ignore();
 		scanner.ignoreN(2);
 		return next();
 	}

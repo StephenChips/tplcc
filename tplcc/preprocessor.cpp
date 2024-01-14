@@ -4,7 +4,7 @@ int Preprocessor::get() { return 0; }
 
 int Preprocessor::peek() { return 0; }
 
-std::vector<int> Preprocessor::peekN(size_t n) { return std::vector<int>(); }
+std::string Preprocessor::peekN(size_t n) { return ""; }
 
 void Preprocessor::ignore() {}
 
