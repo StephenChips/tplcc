@@ -9,16 +9,12 @@ endif()
 
 
 add_executable(tests-main
+	"mocking/simple-string-scanner.cpp"
 	"../tplcc/lexer.cpp"
-	"../tplcc/Lexer.h"
 	"test-lexer.cpp"
-	"../tplcc/scanner.h"
 	"test-preprocessor.cpp" 
 	"../tplcc/preprocessor.cpp"
-	"../tplcc/preprocessor.h"
-	"mocking/report-error-stub.h"
-	"mocking/simple-string-scanner.cpp"
-	"mocking/simple-string-scanner.h"
+	"../tplcc/code-buffer.cpp"
 )
 
 target_include_directories(tests-main PUBLIC "..")
