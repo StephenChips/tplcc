@@ -43,7 +43,7 @@ TEST_F(TestPreprocessor, define_object_macro) {
   // it should be able to handle this situation properly.
   EXPECT_EQ(scanInput("#define FOO 1\n"
                       "int a = FOO"),
-            //                              ^ both exit here.
+            //                    ^ both exit here.
             "int a = 1");
 
   // Expect it can discern macro name among characters

@@ -2,14 +2,14 @@
 
 #include <cctype>
 
-bool isControlLineSpace(int ch) { return ch == ' ' || ch == '\t'; }
+bool isDirectiveSpace(int ch) { return ch == ' ' || ch == '\t'; }
 bool isNewlineCharacter(int ch) { return ch == '\r' || ch == '\n'; }
 
 DirectiveContentScanner::DirectiveContentScanner(Preprocessor* pp) : pp(pp){};
 int DirectiveContentScanner::get() { return *(pp->cursor++); }
 int DirectiveContentScanner::peek() { return *pp->cursor; };
 bool DirectiveContentScanner::reachedEndOfInput() {
-  return !pp->reachedEndOfSection() && isNewlineCharacter(*pp->cursor);
+  return !pp->reachedEndOfSection(pp->cursor) && isNewlineCharacter(*pp->cursor);
 }
 
 SectionContentScanner::SectionContentScanner(Preprocessor& pp, PPCursor& _c)
@@ -54,14 +54,14 @@ bool Preprocessor::isStartOfAComment(const PPCursor& cursor) {
   return lookaheadMatches(cursor, "/*");
 }
 
-bool Preprocessor::isSpace(const PPCursor& cursor, bool isInsideControlLine) {
-  return isInsideControlLine ? isControlLineSpace(*cursor) : std::isspace(*cursor);
+bool Preprocessor::isSpace(const PPCursor& cursor, bool isInsideDirective) {
+  return isInsideDirective ? isDirectiveSpace(*cursor) : std::isspace(*cursor);
 }
 void Preprocessor::skipComment(PPCursor& cursor) {
   cursor++;
   cursor++;
 
-  while (!reachedEndOfSection() && !lookaheadMatches(cursor, "*/")) {
+  while (!reachedEndOfSection(cursor) && !lookaheadMatches(cursor, "*/")) {
     cursor++;
   }
 
@@ -70,9 +70,9 @@ void Preprocessor::skipComment(PPCursor& cursor) {
 }
 
 void Preprocessor::skipWhitespacesAndComments(PPCursor& cursor,
-                                              bool isInsideControlLine) {
-  while (!reachedEndOfSection()) {
-    if (isSpace(cursor, isInsideControlLine)) {
+                                              bool isInsideDirective) {
+  while (!reachedEndOfSection(cursor)) {
+    if (isSpace(cursor, isInsideDirective)) {
       cursor++;
     } else if (isStartOfAComment(cursor)) {
       skipComment(cursor);
@@ -83,10 +83,10 @@ void Preprocessor::skipWhitespacesAndComments(PPCursor& cursor,
 }
 
 int Preprocessor::get() {
-  if (reachedEndOfInput()) {
+  if (reachedEndOfInput(cursor)) {
     return EOF;
   }
-  if (reachedEndOfSection()) {
+  if (reachedEndOfSection(cursor)) {
     exitSection();
     return get();
   }
@@ -102,7 +102,7 @@ int Preprocessor::get() {
     return ' ';
   }
   if (*cursor == '#' && enabledProcessDirectives) {
-    parseControlLine();
+    parseDirective(cursor);
     return get();
   }
 
@@ -152,8 +152,10 @@ void Preprocessor::ignoreN(size_t n) {
   }
 }
 
-bool Preprocessor::reachedEndOfInput() {
-  while (!stackOfSectionID.empty() && reachedEndOfSection()) {
+bool Preprocessor::reachedEndOfInput() { return reachedEndOfInput(cursor); }
+
+bool Preprocessor::reachedEndOfInput(const PPCursor& cursor) {
+  while (!stackOfSectionID.empty() && reachedEndOfSection(cursor)) {
     exitSection();
   }
 
@@ -166,12 +168,12 @@ std::vector<MacroExpansionRecord>& Preprocessor::macroExpansionRecords() {
   return vectorOfMacroExpansion;
 }
 
-void Preprocessor::fastForwardToFirstOutputCharacter() {
+void Preprocessor::fastForwardToFirstOutputCharacter(PPCursor& cursor) {
   while (true) {
     skipSpaces(false);
 
     if (*cursor == '#') {
-      parseControlLine();
+      parseDirective(cursor);
     } else if (isStartOfASpaceOrAComment(cursor, false)) {
       skipWhitespacesAndComments(cursor, false);
     } else {
@@ -180,7 +182,7 @@ void Preprocessor::fastForwardToFirstOutputCharacter() {
   }
 }
 
-void Preprocessor::parseControlLine() {
+void Preprocessor::parseDirective(PPCursor& cursor) {
   using namespace std::literals::string_literals;
   const auto startOffset = currentSection();
   std::string errorMsg;
@@ -203,8 +205,8 @@ void Preprocessor::parseControlLine() {
     }
     std::string macroName = IdentStrLexer(dcs).scan();
     skipWhitespacesAndComments(cursor, true);
-    std::string macroBody = scanControlLine();
-    skipNewline();
+    std::string macroBody = scanDirective(cursor);
+    skipNewline(cursor);
     setOfMacroDefinitions.insert(MacroDefinition(macroName, macroBody));
   } else {
     errorMsg = hint = "Unknown preprocessing directive "s + directiveName;
@@ -214,45 +216,45 @@ void Preprocessor::parseControlLine() {
   return;
 
 fail:
-  skipControlLine();
+  skipDirective(cursor);
   const CodeBuffer::Offset endOffset = cursor;
   const auto range = std::make_tuple(startOffset, endOffset);
   const auto error = Error({startOffset, endOffset}, errorMsg, errorMsg);
   errOut.reportsError(error);
 }
 
-void Preprocessor::skipNewline() {
+void Preprocessor::skipNewline(PPCursor& cursor) {
   if (*cursor == '\r') cursor++;
   if (*cursor == '\n') cursor++;
 }
 
-void Preprocessor::skipSpaces(bool isInsideControlLine) {
-  while (isSpace(cursor, isInsideControlLine)) {
-    if (!isInsideControlLine && isNewlineCharacter(*cursor)) {
+void Preprocessor::skipSpaces(bool isInsideDirective) {
+  while (isSpace(cursor, isInsideDirective)) {
+    if (!isInsideDirective && isNewlineCharacter(*cursor)) {
       enabledProcessDirectives = true;
     }
     cursor++;
   }
 }
 
-void Preprocessor::skipControlLine() {
-  while (!reachedEndOfLine() && !isNewlineCharacter(*cursor)) {
+void Preprocessor::skipDirective(PPCursor& cursor) {
+  while (!reachedEndOfLine(cursor) && !isNewlineCharacter(*cursor)) {
     cursor++;
   }
 }
 
-std::string Preprocessor::scanControlLine() {
+std::string Preprocessor::scanDirective(PPCursor& cursor) {
   std::string output;
 
-  while (!reachedEndOfLine()) {
-    while (!reachedEndOfLine() && !isControlLineSpace(*cursor)) {
+  while (!reachedEndOfLine(cursor)) {
+    while (!reachedEndOfLine(cursor) && !isDirectiveSpace(*cursor)) {
       output.push_back(*cursor);
       cursor++;
     }
 
     skipWhitespacesAndComments(cursor, true);
 
-    if (!reachedEndOfLine()) {
+    if (!reachedEndOfLine(cursor)) {
       output.push_back(' ');
     }
   }
@@ -279,8 +281,8 @@ void Preprocessor::exitSection() {
   }
 }
 
-bool Preprocessor::isStartOfASpaceOrAComment(const PPCursor& cursor, bool isInsideControlLine) {
-  return isSpace(cursor, isInsideControlLine) || lookaheadMatches(cursor, "/*");
+bool Preprocessor::isStartOfASpaceOrAComment(const PPCursor& cursor, bool isInsideDirective) {
+  return isSpace(cursor, isInsideDirective) || lookaheadMatches(cursor, "/*");
 }
 
 CodeBuffer::SectionID Preprocessor::currentSectionID() {

@@ -59,7 +59,7 @@ struct IMacroExpansionRecords {
   ~IMacroExpansionRecords() = default;
 };
 
-bool isControlLineSpace(int ch);
+bool isDirectiveSpace(int ch);
 bool isNewlineCharacter(int ch);
 
 class Preprocessor;
@@ -161,7 +161,7 @@ class Preprocessor : IScanner, IMacroExpansionRecords {
         errOut(errOut),
         cursor(*this, codeBuffer.section(0)),
         dcs(this) {
-    fastForwardToFirstOutputCharacter();
+    fastForwardToFirstOutputCharacter(cursor);
   }
 
   // Inherited via IScanner
@@ -183,21 +183,20 @@ class Preprocessor : IScanner, IMacroExpansionRecords {
   CodeBuffer::Offset currentSectionEnd();
   void enterSection(CodeBuffer::SectionID);
   void exitSection();
-  void fastForwardToFirstOutputCharacter();
-  void parseControlLine();
-  void skipNewline();
-  void skipSpaces(bool isInsideControlLine);
-  void skipControlLine();
-  void skipWhitespacesAndComments(PPCursor& cursor, bool isInsideControlLine);
-  void skipComment(PPCursor& cursor);
-  std::string scanControlLine();
-  bool isStartOfASpaceOrAComment(const PPCursor& cursor, bool isInsideControlLine);
-  bool isSpace(const PPCursor& cursor, bool isInsideControlLine);
+  void fastForwardToFirstOutputCharacter(PPCursor&);
+  void parseDirective(PPCursor&);
+  void skipNewline(PPCursor&);
+  void skipSpaces(bool isInsideDirective);
+  void skipDirective(PPCursor&);
+  void skipWhitespacesAndComments(PPCursor& cursor, bool isInsideDirective);
+  void skipComment(PPCursor&);
+  std::string scanDirective(PPCursor&);
+  bool isStartOfASpaceOrAComment(const PPCursor& cursor, bool isInsideDirective);
+  bool isSpace(const PPCursor& cursor, bool isInsideDirective);
   bool isStartOfAComment(const PPCursor& cursor);
   bool reachedEndOfSection(const PPCursor&);
-  bool reachedEndOfSection() { return reachedEndOfSection(cursor); }
   bool reachedEndOfLine(const PPCursor&);
-  bool reachedEndOfLine() { return reachedEndOfLine(cursor); }
+  bool reachedEndOfInput(const PPCursor&);
   bool lookaheadMatches(PPCursor cursor, const std::string& chars);
 };
 
