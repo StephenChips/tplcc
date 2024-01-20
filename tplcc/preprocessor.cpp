@@ -101,10 +101,12 @@ int Preprocessor::get() {
     skipWhitespacesAndComments(cursor, false);
     return ' ';
   }
-  if (*cursor == '#') {
+  if (*cursor == '#' && enabledProcessDirectives) {
     parseControlLine();
     return get();
   }
+
+  enabledProcessDirectives = false;
 
   if (IdentStrLexer::isStartOfAIdentifier(*cursor)) {
     identCursor = cursor;
@@ -226,6 +228,9 @@ void Preprocessor::skipNewline() {
 
 void Preprocessor::skipSpaces(bool isInsideControlLine) {
   while (isSpace(cursor, isInsideControlLine)) {
+    if (!isInsideControlLine && isNewlineCharacter(*cursor)) {
+      enabledProcessDirectives = true;
+    }
     cursor++;
   }
 }

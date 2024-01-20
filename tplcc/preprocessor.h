@@ -148,6 +148,8 @@ class Preprocessor : IScanner, IMacroExpansionRecords {
   std::vector<MacroExpansionRecord> vectorOfMacroExpansion;
   std::set<MacroDefinition, CompareMacroDefinition> setOfMacroDefinitions;
 
+  bool enabledProcessDirectives = true;
+
   friend class DirectiveContentScanner;
   friend class SectionContentScanner;
   friend class PPCursor;

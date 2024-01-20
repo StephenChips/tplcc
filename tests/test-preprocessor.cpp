@@ -43,7 +43,7 @@ TEST_F(TestPreprocessor, define_object_macro) {
   // it should be able to handle this situation properly.
   EXPECT_EQ(scanInput("#define FOO 1\n"
                       "int a = FOO"),
-  //                              ^ both exit here.
+            //                              ^ both exit here.
             "int a = 1");
 
   // Expect it can discern macro name among characters
@@ -83,4 +83,12 @@ R F\
 OO)";
 
   EXPECT_EQ(scanInput(str), "int a = 20");
+}
+
+TEST_F(TestPreprocessor, directive_should_be_at_the_start_of_the_line) {
+  const auto s =
+      "int a = 10; #define FOO 10\n"
+      "int b = FOO";
+
+  EXPECT_EQ(scanInput(s), "int a = 10; #define FOO 10 int b = FOO");
 }
