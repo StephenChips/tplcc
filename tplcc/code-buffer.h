@@ -3,22 +3,27 @@
 
 #include <string>
 #include <vector>
+#include <cstddef>
 
 class CodeBuffer {
+ public:
+  typedef std::uint32_t SectionID;
+  typedef std::uint32_t Offset;
+
+ private:
   std::string buf;
-  std::vector<size_t> sectionOffsets;
+  std::vector<Offset> sectionOffsets;
 
  public:
-  typedef size_t SectionID;
   CodeBuffer() = default;
   CodeBuffer(std::string sourceCode)
       : buf(std::move(sourceCode)), sectionOffsets{0} {}
-  size_t offset(const char* p);
-  const char* section(SectionID id);
-  const char* secitonEnd(SectionID id);
-  size_t sectionSize(SectionID id);
-  size_t sectionCount();
+  CodeBuffer::Offset section(SectionID id);
+  CodeBuffer::Offset sectionEnd(SectionID id);
+  CodeBuffer::Offset sectionSize(SectionID id);
+  CodeBuffer::Offset sectionCount();
   SectionID addSection(std::string content);
+  char operator[](CodeBuffer::Offset index);
 };
 
 #endif

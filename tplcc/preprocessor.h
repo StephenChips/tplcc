@@ -1,9 +1,10 @@
 #ifndef TPLCC_PREPROCESSOR_H
 #define TPLCC_PREPROCESSOR_H
 
+#include <compare>
+#include <map>
 #include <optional>
 #include <set>
-#include <map>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -58,20 +59,60 @@ struct IMacroExpansionRecords {
   ~IMacroExpansionRecords() = default;
 };
 
-bool isControlLineSpace(const char ch);
-bool isNewlineCharacter(const char ch);
+bool isControlLineSpace(int ch);
+bool isNewlineCharacter(int ch);
 
 class Preprocessor;
+
+class PPCursor {
+  Preprocessor& pp;
+  CodeBuffer::Offset cursor;
+
+ public:
+  PPCursor(Preprocessor& pp, CodeBuffer::Offset offset);
+  PPCursor(const PPCursor& other) : pp(other.pp), cursor(other.cursor) {}
+  PPCursor& operator++();
+  PPCursor operator++(int);
+  const char operator*() const;
+  operator CodeBuffer::Offset();
+  PPCursor& operator=(CodeBuffer::Offset newOffset) {
+    cursor = newOffset;
+    return *this;
+  }
+  PPCursor& operator=(const PPCursor& other) {
+    cursor = other.cursor;
+    return *this;
+  }
+  char currentChar();
+  friend std::strong_ordering operator<=>(const PPCursor&, CodeBuffer::Offset);
+  friend std::strong_ordering operator<=>(CodeBuffer::Offset, const PPCursor&);
+  friend std::strong_ordering operator<=>(const PPCursor&, const PPCursor&);
+
+  friend bool operator==(const PPCursor&, CodeBuffer::Offset);
+  friend bool operator==(CodeBuffer::Offset, const PPCursor&);
+  friend bool operator==(const PPCursor&, const PPCursor&);
+};
 
 // Only use it when scanning a preprocessing directive's content.
 class DirectiveContentScanner : public IGetPeekOnlyScanner {
   Preprocessor* const pp;
 
  public:
-  DirectiveContentScanner(Preprocessor* _pp);
-  virtual int get();
-  virtual int peek();
-  virtual bool reachedEndOfInput();
+  DirectiveContentScanner(Preprocessor* const _pp);
+  int get();
+  int peek();
+  bool reachedEndOfInput();
+};
+
+class SectionContentScanner : public IGetPeekOnlyScanner {
+  Preprocessor& pp;
+  PPCursor& cursor;
+
+ public:
+  SectionContentScanner(Preprocessor& pp, PPCursor& cursor);
+  int get() override;
+  int peek() override;
+  bool reachedEndOfInput() override;
 };
 
 class Preprocessor : IScanner, IMacroExpansionRecords {
@@ -92,30 +133,34 @@ class Preprocessor : IScanner, IMacroExpansionRecords {
     }
   };
 
-  const char* cursor;
-  const char* endOfNonMacroPPToken = nullptr;
-
   CodeBuffer& codeBuffer;
   IReportError& errOut;
+
+  PPCursor cursor;
+  std::optional<PPCursor> identCursor;
+  DirectiveContentScanner dcs;
 
   // A cache for macro that has been expanded before.
   std::map<std::string, CodeBuffer::SectionID> codeCache;
 
-  std::vector<size_t> stackOfSectionID;
-  std::vector<const char*> stackOfStoredCursor;
+  std::vector<CodeBuffer::SectionID> stackOfSectionID;
+  std::vector<CodeBuffer::Offset> stackOfStoredOffsets;
   std::vector<MacroExpansionRecord> vectorOfMacroExpansion;
   std::set<MacroDefinition, CompareMacroDefinition> setOfMacroDefinitions;
-  DirectiveContentScanner dcs;
 
   friend class DirectiveContentScanner;
+  friend class SectionContentScanner;
+  friend class PPCursor;
 
  public:
   // Change IScanner to IPreprocessor
   Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut)
-      : errOut(errOut),
-        codeBuffer(codeBuffer),
-        cursor(codeBuffer.section(0)),
-        dcs(this) {}
+      : codeBuffer(codeBuffer),
+        errOut(errOut),
+        cursor(*this, codeBuffer.section(0)),
+        dcs(this) {
+    fastForwardToFirstOutputCharacter();
+  }
 
   // Inherited via IScanner
   int get() override;
@@ -130,21 +175,28 @@ class Preprocessor : IScanner, IMacroExpansionRecords {
   std::vector<MacroExpansionRecord>& macroExpansionRecords() override;
 
  private:
-  static void initializeBuffer(Preprocessor* pp, CodeBuffer& codeBuffer);
-  void parseControlLine();
   void addPreprocessorDirective(PreprocessorDirective directive);
-  void skipNewline();
-  void skipControlLineSpaces();
-  void skipControlLine();
-  void skipControlLineWhitespaces();
-  void skipWhitespaces();
-  std::string scanControlLine();
-  bool reachedEndOfSection();
-  bool reachedEndOfLine();
   CodeBuffer::SectionID currentSectionID();
-  const char* currentSection();
-  void enterSection(CodeBuffer::SectionID id);
+  CodeBuffer::Offset currentSection();
+  CodeBuffer::Offset currentSectionEnd();
+  void enterSection(CodeBuffer::SectionID);
   void exitSection();
+  void fastForwardToFirstOutputCharacter();
+  void parseControlLine();
+  void skipNewline();
+  void skipSpaces(bool isInsideControlLine);
+  void skipControlLine();
+  void skipWhitespacesAndComments(PPCursor& cursor, bool isInsideControlLine);
+  void skipComment(PPCursor& cursor);
+  std::string scanControlLine();
+  bool isStartOfASpaceOrAComment(const PPCursor& cursor, bool isInsideControlLine);
+  bool isSpace(const PPCursor& cursor, bool isInsideControlLine);
+  bool isStartOfAComment(const PPCursor& cursor);
+  bool reachedEndOfSection(const PPCursor&);
+  bool reachedEndOfSection() { return reachedEndOfSection(cursor); }
+  bool reachedEndOfLine(const PPCursor&);
+  bool reachedEndOfLine() { return reachedEndOfLine(cursor); }
+  bool lookaheadMatches(PPCursor cursor, const std::string& chars);
 };
 
 #endif  // !TPLCC_PREPROCESSOR_H

@@ -8,7 +8,8 @@
 #include <optional>
 #include <cstdint>
 
-#include "scanner.h"
+#include "scanner.h" 
+#include "code-buffer.h"
 
 class Error {
     std::string msg;
@@ -16,7 +17,8 @@ class Error {
     std::tuple<std::uint32_t, std::uint32_t> range;
 
 public:
-    Error(std::tuple<std::uint32_t, std::uint32_t> range, std::string msg, std::string hintMsg = "")
+    Error(std::tuple<CodeBuffer::Offset, CodeBuffer::Offset> range,
+          std::string msg, std::string hintMsg = "")
         : range(range), msg(std::move(msg)), hintMsg(std::move(hintMsg)) {}
 
     std::string hint() const {
@@ -27,7 +29,7 @@ public:
         return msg;
     }
 
-    std::tuple<std::uint32_t, std::uint32_t> codeRange() const {
+    std::tuple<CodeBuffer::Offset, CodeBuffer::Offset> codeRange() const {
         return range;
     }
 };

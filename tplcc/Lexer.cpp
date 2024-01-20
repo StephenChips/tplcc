@@ -410,8 +410,8 @@ std::optional<Token> Lexer::scanCharSequence(const char quote, const std::string
 std::optional<Token> Lexer::scanPunctuator()
 {
 	for (const auto& punct : ALL_PUNCTUATORS) {
-		const auto lookahead = scanner.peekN(punct.str.size());
-		if (punct.str == std::string(lookahead.begin(), lookahead.end())) {
+                const auto lookahead = scanner.peekN(punct.str.size());
+                if (punct.str == std::string(lookahead.begin(), lookahead.end())) {
 			scanner.ignoreN(punct.str.size());
 			return punct;
 		}
