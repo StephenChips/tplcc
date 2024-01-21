@@ -92,3 +92,19 @@ TEST_F(TestPreprocessor, directive_should_be_at_the_start_of_the_line) {
 
   EXPECT_EQ(scanInput(s), "int a = 10; #define FOO 10 int b = FOO");
 }
+
+TEST_F(TestPreprocessor, empty_directive_line) {
+  const auto s =
+      "#       \n"
+      "int a = 10;";
+
+  EXPECT_EQ(scanInput(s), "int a = 10;");
+}
+
+TEST_F(TestPreprocessor, define_object_with_empty_body) {
+  const auto s =
+      "# define FOO\n"
+      "FOO;";
+
+  EXPECT_EQ(scanInput(s), ";");
+}

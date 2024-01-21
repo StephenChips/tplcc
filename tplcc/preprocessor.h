@@ -74,7 +74,6 @@ class PPCursor {
   PPCursor& operator++();
   PPCursor operator++(int);
   const char operator*() const;
-  operator CodeBuffer::Offset();
   PPCursor& operator=(CodeBuffer::Offset newOffset) {
     cursor = newOffset;
     return *this;
@@ -84,6 +83,7 @@ class PPCursor {
     return *this;
   }
   char currentChar();
+  CodeBuffer::Offset offset();
   friend std::strong_ordering operator<=>(const PPCursor&, CodeBuffer::Offset);
   friend std::strong_ordering operator<=>(CodeBuffer::Offset, const PPCursor&);
   friend std::strong_ordering operator<=>(const PPCursor&, const PPCursor&);

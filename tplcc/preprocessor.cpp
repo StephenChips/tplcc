@@ -9,13 +9,14 @@ DirectiveContentScanner::DirectiveContentScanner(Preprocessor* pp) : pp(pp){};
 int DirectiveContentScanner::get() { return *(pp->cursor++); }
 int DirectiveContentScanner::peek() { return *pp->cursor; };
 bool DirectiveContentScanner::reachedEndOfInput() {
-  return !pp->reachedEndOfSection(pp->cursor) && isNewlineCharacter(*pp->cursor);
+  return !pp->reachedEndOfSection(pp->cursor) &&
+         isNewlineCharacter(*pp->cursor);
 }
 
 SectionContentScanner::SectionContentScanner(Preprocessor& pp, PPCursor& _c)
     : pp(pp), cursor(_c) {}
-int SectionContentScanner::get() { return pp.codeBuffer[cursor++]; }
-int SectionContentScanner::peek() { return pp.codeBuffer[cursor]; }
+int SectionContentScanner::get() { return *(cursor++); }
+int SectionContentScanner::peek() { return *cursor; }
 bool SectionContentScanner::reachedEndOfInput() {
   return cursor >= pp.currentSectionEnd();
 }
@@ -162,7 +163,7 @@ bool Preprocessor::reachedEndOfInput(const PPCursor& cursor) {
   return stackOfSectionID.empty() && cursor == codeBuffer.sectionEnd(0);
 }
 
-std::uint32_t Preprocessor::offset() { return cursor; }
+std::uint32_t Preprocessor::offset() { return cursor.offset(); }
 
 std::vector<MacroExpansionRecord>& Preprocessor::macroExpansionRecords() {
   return vectorOfMacroExpansion;
@@ -192,13 +193,20 @@ void Preprocessor::parseDirective(PPCursor& cursor) {
   skipSpaces(true);
 
   std::string directiveName;
-  while (!reachedEndOfInput() && !isSpace(cursor, true)) {
+  while (!reachedEndOfSection(cursor) && !reachedEndOfLine(cursor) &&
+         !isSpace(cursor, true)) {
     directiveName.push_back(*cursor);
     cursor++;
   }
 
+  if (directiveName == "") {
+    skipNewline(cursor);
+    return;
+  }
+
   if (directiveName == "define") {
     skipWhitespacesAndComments(cursor, true);
+
     if (!isFirstCharOfIdentifier(*cursor)) {
       errorMsg = hint = "macro names must be identifiers";
       goto fail;
@@ -217,7 +225,7 @@ void Preprocessor::parseDirective(PPCursor& cursor) {
 
 fail:
   skipDirective(cursor);
-  const CodeBuffer::Offset endOffset = cursor;
+  const CodeBuffer::Offset endOffset = cursor.offset();
   const auto range = std::make_tuple(startOffset, endOffset);
   const auto error = Error({startOffset, endOffset}, errorMsg, errorMsg);
   errOut.reportsError(error);
@@ -269,7 +277,7 @@ bool Preprocessor::reachedEndOfSection(const PPCursor& cursor) {
 
 void Preprocessor::enterSection(CodeBuffer::SectionID id) {
   stackOfSectionID.push_back(id);
-  stackOfStoredOffsets.push_back(cursor);
+  stackOfStoredOffsets.push_back(cursor.offset());
   cursor = codeBuffer.section(id);
 }
 
@@ -281,7 +289,8 @@ void Preprocessor::exitSection() {
   }
 }
 
-bool Preprocessor::isStartOfASpaceOrAComment(const PPCursor& cursor, bool isInsideDirective) {
+bool Preprocessor::isStartOfASpaceOrAComment(const PPCursor& cursor,
+                                             bool isInsideDirective) {
   return isSpace(cursor, isInsideDirective) || lookaheadMatches(cursor, "/*");
 }
 
@@ -339,11 +348,11 @@ PPCursor PPCursor::operator++(int) {
   return copy;
 }
 
+CodeBuffer::Offset PPCursor::offset() { return cursor; }
+
 char PPCursor::currentChar() { return pp.codeBuffer[cursor]; }
 
 const char PPCursor::operator*() const { return pp.codeBuffer[cursor]; }
-
-PPCursor::operator CodeBuffer::Offset() { return cursor; }
 
 std::strong_ordering operator<=>(const PPCursor& lhs, CodeBuffer::Offset rhs) {
   return lhs.cursor <=> rhs;
