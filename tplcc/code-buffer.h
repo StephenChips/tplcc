@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <cstddef>
+#include <cstdint>
 
 class CodeBuffer {
  public:
@@ -18,12 +19,12 @@ class CodeBuffer {
   CodeBuffer() = default;
   CodeBuffer(std::string sourceCode)
       : buf(std::move(sourceCode)), sectionOffsets{0} {}
-  CodeBuffer::Offset section(SectionID id);
-  CodeBuffer::Offset sectionEnd(SectionID id);
-  CodeBuffer::Offset sectionSize(SectionID id);
-  CodeBuffer::Offset sectionCount();
+  CodeBuffer::Offset section(SectionID id) const;
+  CodeBuffer::Offset sectionEnd(SectionID id) const;
+  CodeBuffer::Offset sectionSize(SectionID id) const;
+  CodeBuffer::Offset sectionCount() const;
   SectionID addSection(std::string content);
-  char operator[](CodeBuffer::Offset index);
+  std::uint8_t operator[](CodeBuffer::Offset index) const;
 };
 
 #endif

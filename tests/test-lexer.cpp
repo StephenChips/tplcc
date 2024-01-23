@@ -7,6 +7,7 @@
 #include "tplcc/Lexer.h"
 #include "./mocking/simple-string-scanner.h"
 #include "./mocking/report-error-stub.h"
+#include "./utils/helpers.h"
 
 template<typename T>
 bool operator==(const Token& token, const T& literal) {
@@ -308,10 +309,6 @@ TEST(TestLexer, test_lexer_error_invalid_octal_number) {
 		EXPECT_EQ(error.hint(), "Invalid octal number.");
 		EXPECT_EQ(li.offset(), literals[i].size());
 	}
-}
-
-std::string fromUTF32(std::u32string&& s) {
-	return std::string(s.begin(), s.end());
 }
 
 TEST(TestLexer, test_string_literal) {

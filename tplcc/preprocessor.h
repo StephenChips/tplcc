@@ -2,16 +2,22 @@
 #define TPLCC_PREPROCESSOR_H
 
 #include <compare>
+#include <concepts>
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "code-buffer.h"
+#include "cursor.h"
+#include "encoding-cursor.h"
 #include "error.h"
 #include "scanner.h"
 
@@ -64,33 +70,35 @@ bool isNewlineCharacter(int ch);
 
 class Preprocessor;
 
-class PPCursor {
-  Preprocessor& pp;
-  CodeBuffer::Offset cursor;
+class PPCursor : public ICursor {
+  Preprocessor* pp;
+  ICursor* cursor;
 
  public:
-  PPCursor(Preprocessor& pp, CodeBuffer::Offset offset);
-  PPCursor(const PPCursor& other) : pp(other.pp), cursor(other.cursor) {}
-  PPCursor& operator++();
-  PPCursor operator++(int);
-  const char operator*() const;
-  PPCursor& operator=(CodeBuffer::Offset newOffset) {
-    cursor = newOffset;
-    return *this;
+  PPCursor() = delete;
+  PPCursor(Preprocessor* pp, ICursor* cursor) noexcept;
+  PPCursor(const PPCursor& other) noexcept
+      : pp(other.pp), cursor(other.cursor->clone().release()) {}
+  PPCursor(PPCursor&& other) noexcept : pp(pp) {
+    std::swap(cursor, other.cursor);
   }
-  PPCursor& operator=(const PPCursor& other) {
-    cursor = other.cursor;
-    return *this;
-  }
-  char currentChar();
-  CodeBuffer::Offset offset();
-  friend std::strong_ordering operator<=>(const PPCursor&, CodeBuffer::Offset);
-  friend std::strong_ordering operator<=>(CodeBuffer::Offset, const PPCursor&);
-  friend std::strong_ordering operator<=>(const PPCursor&, const PPCursor&);
 
-  friend bool operator==(const PPCursor&, CodeBuffer::Offset);
-  friend bool operator==(CodeBuffer::Offset, const PPCursor&);
-  friend bool operator==(const PPCursor&, const PPCursor&);
+  PPCursor& next() override;
+  std::uint32_t currentChar() const override;
+  PPCursor& setOffset(CodeBuffer::Offset newOffset) override;
+  CodeBuffer::Offset offset() const override;
+  std::unique_ptr<ICursor> clone() const override {
+    return std::unique_ptr<ICursor>(new PPCursor(*this));
+  }
+  PPCursor& operator=(PPCursor other) {
+    using std::swap;
+    swap(this->cursor, other.cursor);
+    return *this;
+  }
+
+  ~PPCursor() {
+      delete cursor;
+  }
 };
 
 // Only use it when scanning a preprocessing directive's content.
@@ -114,6 +122,12 @@ class SectionContentScanner : public IGetPeekOnlyScanner {
   int peek() override;
   bool reachedEndOfInput() override;
 };
+
+template <typename T>
+concept CreateCursorFunc =
+    requires(T func, const CodeBuffer& buffer, CodeBuffer::Offset offset) {
+      { func(buffer, offset) };
+    };
 
 class Preprocessor : IScanner, IMacroExpansionRecords {
   struct CompareMacroDefinition {
@@ -155,14 +169,19 @@ class Preprocessor : IScanner, IMacroExpansionRecords {
   friend class PPCursor;
 
  public:
-  // Change IScanner to IPreprocessor
-  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut)
+  template <typename T>
+    requires CreateCursorFunc<T>
+  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut, T createCursorFunc)
       : codeBuffer(codeBuffer),
         errOut(errOut),
-        cursor(*this, codeBuffer.section(0)),
+        cursor(this,
+               createCursorFunc(codeBuffer, codeBuffer.section(0)).release()),
         dcs(this) {
     fastForwardToFirstOutputCharacter(cursor);
   }
+
+  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut)
+      : Preprocessor(codeBuffer, errOut, UTF8Cursor::create) {}
 
   // Inherited via IScanner
   int get() override;
@@ -191,13 +210,14 @@ class Preprocessor : IScanner, IMacroExpansionRecords {
   void skipWhitespacesAndComments(PPCursor& cursor, bool isInsideDirective);
   void skipComment(PPCursor&);
   std::string scanDirective(PPCursor&);
-  bool isStartOfASpaceOrAComment(const PPCursor& cursor, bool isInsideDirective);
+  bool isStartOfASpaceOrAComment(const PPCursor& cursor,
+                                 bool isInsideDirective);
   bool isSpace(const PPCursor& cursor, bool isInsideDirective);
   bool isStartOfAComment(const PPCursor& cursor);
   bool reachedEndOfSection(const PPCursor&);
   bool reachedEndOfLine(const PPCursor&);
   bool reachedEndOfInput(const PPCursor&);
-  bool lookaheadMatches(PPCursor cursor, const std::string& chars);
+  bool lookaheadMatches(const ICursor& cursor, const std::string& chars);
 };
 
 #endif  // !TPLCC_PREPROCESSOR_H

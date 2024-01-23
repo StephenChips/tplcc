@@ -1,23 +1,28 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <string>
 
 #include "./mocking/report-error-stub.h"
 #include "tplcc/code-buffer.h"
 #include "tplcc/preprocessor.h"
+#include "./utils/helpers.h"
 
 class TestPreprocessor : public ::testing::Test {
+ protected:
   std::unique_ptr<ReportErrorStub> errOut;
   std::unique_ptr<Preprocessor> pp;
   std::unique_ptr<CodeBuffer> codeBuffer;
 
- protected:
   std::string scanInput(const std::string& inputStr) {
+    setUpPreprocessor(inputStr);
+    return exhaustPreprocessor();
+  }
+
+  void setUpPreprocessor(const std::string& inputStr) {
     codeBuffer = std::make_unique<CodeBuffer>(inputStr);
     errOut = std::make_unique<ReportErrorStub>();
     pp = std::make_unique<Preprocessor>(*codeBuffer, *errOut);
-
-    return exhaustPreprocessor();
   }
 
  private:
@@ -107,4 +112,29 @@ TEST_F(TestPreprocessor, define_object_with_empty_body) {
       "FOO;";
 
   EXPECT_EQ(scanInput(s), ";");
+}
+
+TEST_F(TestPreprocessor, define_directive_in_a_string) {
+  const auto s = "\"#define FOO 1\"";
+  EXPECT_EQ(scanInput(s), s);
+}
+
+TEST_F(TestPreprocessor, test_encoding) {
+  const auto s = fromUTF8(std::u8string{u8"Äã"});
+  setUpPreprocessor(s);
+
+  std::vector<std::uint32_t> characters;
+
+  while (!pp->reachedEndOfInput()) {
+    characters.push_back(pp->get());
+  }
+
+  if (characters == std::vector{0xe4u, 0xbdu, 0xa0u}) {
+    FAIL() << "Outputted the multibyte UTF-8 character Äã as three single byte characters.";
+    return;
+  }
+
+  ASSERT_EQ(characters.size(), 1);
+  EXPECT_EQ(characters[0], 0x4f60);
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
 }
