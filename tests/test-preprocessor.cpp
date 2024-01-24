@@ -4,9 +4,9 @@
 #include <string>
 
 #include "./mocking/report-error-stub.h"
+#include "./utils/helpers.h"
 #include "tplcc/code-buffer.h"
 #include "tplcc/preprocessor.h"
-#include "./utils/helpers.h"
 
 class TestPreprocessor : public ::testing::Test {
  protected:
@@ -130,11 +130,108 @@ TEST_F(TestPreprocessor, test_encoding) {
   }
 
   if (characters == std::vector{0xe4u, 0xbdu, 0xa0u}) {
-    FAIL() << "Outputted the multibyte UTF-8 character Äã as three single byte characters.";
+    FAIL() << "Outputted the multibyte UTF-8 character Äã as three single byte "
+              "characters.";
     return;
   }
 
   ASSERT_EQ(characters.size(), 1);
   EXPECT_EQ(characters[0], 0x4f60);
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
+}
+
+TEST_F(TestPreprocessor, define_function_macro) {
+  const std::string macroDIV{"#define DIV(foo, bar) ((foo) / (bar))\n"};
+  const std::string macroID{"#define ID(x) x\n"};
+  const std::string macroMCALL{"#define MCALL(func, x) func(x)  \n"};
+
+  /* The simplest situation */
+  EXPECT_EQ(scanInput(macroDIV + "DIV(4, 3)"), "((4) / (3)");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  /* Multiple pp-tokens in an argument */
+  EXPECT_EQ(scanInput(macroDIV + "DIV(1 + 2+ !foo.bar, 3)"),
+            "((1 + 2+ !foo.bar) / (3))");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  /* The argumnet is a macro expansion too */
+  EXPECT_EQ(scanInput(macroDIV + "DIV(DIV(jo,ca), iad)"),
+            "((((jo) / (ca))) / (iad))");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  /* The argument is a function call rather than a macro expansion */
+  EXPECT_EQ(scanInput(macroDIV + "DIV(add(biz, biz), biz)"),
+            "((add(biz, biz)) / (biz))");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  /* The macro body includes other macros and has function calls */
+  EXPECT_EQ(scanInput(macroDIV + macroID +
+                      "#define X(a, b) DIV(ID(a), foo(b, c))\n"
+                      "X(3, 4)"),
+            "((ID(3)) / (foo(4, c)))");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  /* ID(MCALL(ID), 123456) -> ID(ID(123456)) -> ID(123456) -> 123456 */
+  EXPECT_EQ(scanInput(macroID + macroMCALL + "ID(MCALL(ID, 123456))"),
+            "123456");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  EXPECT_EQ(scanInput(macroID + "ID()"), "");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+  EXPECT_EQ(scanInput(macroID + macroMCALL), "MCALL(ID,)", "");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  /* Invalid cases */
+
+  EXPECT_EQ(scanInput(macroID + macroMCALL), "MCALL(ID)", "");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "macro \"MCALL\" requires 2 arguments, but only 1 given");
+  }
+
+  scanInput("#define F(a, a) a");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "duplicated parameter in the function-like macro F");
+  }
+
+  scanInput(
+      "#define F(a)\n"
+      "F(adfadwf \n"
+      "daf df");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "unterminated argument list invoking macro \"F\"");
+  }
+
+  scanInput("#define F(a");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "expected ')' before end of line");
+  }
+
+  scanInput(
+      "#define F(a,\n"
+      "#define G(\n");
+  EXPECT_EQ(errOut->listOfErrors.size(), 2);
+  if (errOut->listOfErrors.size() == 2) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "expected parameter name before end of line");
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "expected parameter name before end of line");
+  }
+
+  scanInput("#define F(G()) G()");
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "expected ',' or ')', found \"(\"");
+  }
+
+  // TODO __VA_ARGS__
+  // TODO: paint-blue
+  // TODO #/## operator
 }
