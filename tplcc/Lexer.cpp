@@ -152,13 +152,13 @@ namespace {
 
 	class NumberLiteralScanner {
 		std::string buffer;
-		IScanner& scanner;
+		ILexerScanner& scanner;
 		IReportError& errOut;
 		std::vector<std::unique_ptr<Error>> listOfErrors;
 		uint32_t startOffset;
 
 	public:
-		NumberLiteralScanner(IScanner& s, IReportError& e)
+		NumberLiteralScanner(ILexerScanner& s, IReportError& e)
 			: scanner(s), errOut(e), startOffset(s.offset()) {};
 		std::optional<NumberLiteral> scan();
 	private:

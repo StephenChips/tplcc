@@ -3,7 +3,6 @@
 #include <gtest/gtest.h>
 #include <format>
 
-#include "tplcc/scanner.h"
 #include "tplcc/Lexer.h"
 #include "./mocking/simple-string-scanner.h"
 #include "./mocking/report-error-stub.h"

@@ -12,6 +12,14 @@
 #include "scanner.h"
 #include "error.h"
 
+struct ILexerScanner : IBaseScanner {
+  virtual std::string peekN(size_t n) = 0;
+  virtual void ignore() = 0;
+  virtual void ignoreN(size_t n) = 0;
+  virtual std::uint32_t offset() = 0;
+  virtual ~ILexerScanner() = default;
+};
+
 struct Punctuator {
 	std::string str;
 	bool operator==(const Punctuator&) const = default;
@@ -120,10 +128,10 @@ using Token = std::variant<
 
 class Lexer {
 private:
-	IScanner& scanner;
+	ILexerScanner& scanner;
 	IReportError& errOut;
 public:
-	Lexer(IScanner& is, IReportError& errOut): scanner(is), errOut(errOut){}
+	Lexer(ILexerScanner& is, IReportError& errOut): scanner(is), errOut(errOut){}
 	std::optional<Token> next();
 private:
 	std::string readIdentString();

@@ -1,10 +1,10 @@
 #ifndef TPLCC_TESTS_MOCKING_SIMPLE_STRING_SCANNER_H
 #define TPLCC_TESTS_MOCKING_SIMPLE_STRING_SCANNER_H
 
-#include "tplcc/scanner.h"
+#include "tplcc/lexer.h"
 
 // A simple string scanner mainly for testing.
-class SimpleStringScanner : public IScanner {
+class SimpleStringScanner : public ILexerScanner {
 	const std::string input;
 	size_t cursor = 0;
 	std::vector<size_t> startOfLineIndice;

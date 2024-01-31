@@ -31,10 +31,10 @@ bool SectionContentScanner::reachedEndOfInput() {
 }
 
 class IdentStrLexer {
-  IGetPeekOnlyScanner& scanner;
+  IBaseScanner& scanner;
 
  public:
-  IdentStrLexer(IGetPeekOnlyScanner& scanner) : scanner(scanner){};
+  IdentStrLexer(IBaseScanner& scanner) : scanner(scanner){};
   std::string scan();
 
   static bool isStartOfAIdentifier(const char ch);
@@ -156,16 +156,6 @@ int Preprocessor::get() {
 
 int Preprocessor::peek() { return cursor.currentChar(); }
 
-std::string Preprocessor::peekN(size_t n) { return ""; }
-
-void Preprocessor::ignore() { get(); }
-
-void Preprocessor::ignoreN(size_t n) {
-  for (size_t i = 0; i < n; i++) {
-    get();
-  }
-}
-
 bool Preprocessor::reachedEndOfInput() { return reachedEndOfInput(cursor); }
 
 bool Preprocessor::reachedEndOfInput(const PPCursor& cursor) {
@@ -176,8 +166,6 @@ bool Preprocessor::reachedEndOfInput(const PPCursor& cursor) {
   return stackOfSectionID.empty() &&
          cursor.offset() == codeBuffer.sectionEnd(0);
 }
-
-std::uint32_t Preprocessor::offset() { return cursor.offset(); }
 
 std::vector<MacroExpansionRecord>& Preprocessor::macroExpansionRecords() {
   return vectorOfMacroExpansion;

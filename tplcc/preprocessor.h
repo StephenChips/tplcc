@@ -102,7 +102,7 @@ class PPCursor : public ICursor {
 };
 
 // Only use it when scanning a preprocessing directive's content.
-class DirectiveContentScanner : public IGetPeekOnlyScanner {
+class DirectiveContentScanner : public IBaseScanner {
   Preprocessor* const pp;
 
  public:
@@ -112,7 +112,7 @@ class DirectiveContentScanner : public IGetPeekOnlyScanner {
   bool reachedEndOfInput();
 };
 
-class SectionContentScanner : public IGetPeekOnlyScanner {
+class SectionContentScanner : public IBaseScanner {
   Preprocessor& pp;
   PPCursor& cursor;
 
@@ -129,7 +129,7 @@ concept CreateCursorFunc =
       { func(buffer, offset) };
     };
 
-class Preprocessor : IScanner, IMacroExpansionRecords {
+class Preprocessor : IBaseScanner, IMacroExpansionRecords {
   struct CompareMacroDefinition {
     using is_transparent = std::true_type;
 
@@ -186,11 +186,7 @@ class Preprocessor : IScanner, IMacroExpansionRecords {
   // Inherited via IScanner
   int get() override;
   int peek() override;
-  std::string peekN(size_t n) override;
-  void ignore() override;
-  void ignoreN(size_t n) override;
   bool reachedEndOfInput() override;
-  std::uint32_t offset() override;  // TODO Maby change to bufferOffset
 
   // Inherited via IMacroExpansionRecords
   std::vector<MacroExpansionRecord>& macroExpansionRecords() override;
