@@ -8,7 +8,8 @@ add_executable (tplcc
 	"lexer.cpp"
 	"preprocessor.cpp"
 	"code-buffer.cpp"
-	"encoding-cursor.cpp")
+	"encoding.cpp"
+)
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET tplcc PROPERTY CXX_STANDARD 20)

@@ -23,6 +23,7 @@ class CodeBuffer {
   CodeBuffer::Offset sectionEnd(SectionID id) const;
   CodeBuffer::Offset sectionSize(SectionID id) const;
   CodeBuffer::Offset sectionCount() const;
+  const unsigned char* pos(CodeBuffer::Offset) const;
   SectionID addSection(std::string content);
   std::uint8_t operator[](CodeBuffer::Offset index) const;
 };

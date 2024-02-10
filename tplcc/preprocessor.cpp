@@ -3,42 +3,51 @@
 #include <cctype>
 #include <cstdint>
 
+void skipAll(PPBaseScanner& scanner) {
+  while (scanner.get() != EOF)
+    ;
+}
+
+std::string readAll(PPBaseScanner& scanner) {
+  std::string content;
+  for (auto ch = scanner.get(); ch != EOF; ch = scanner.get()) {
+    content.push_back(ch);
+  }
+  return content;
+}
+
+// The MSVC's std::isspace is troublesome. It will throw a runtime error when we
+// pass codepoint that is larger than 255, instead of simply returning false, so
+// we have to write our own version of isspace here.
+bool isSpace(int ch) {
+  return ch == ' ' || ch == '\f' || ch == '\n' || ch == '\r' || ch == '\t' ||
+         ch == '\v';
+}
 bool isDirectiveSpace(int ch) { return ch == ' ' || ch == '\t'; }
 bool isNewlineCharacter(int ch) { return ch == '\r' || ch == '\n'; }
 
-DirectiveContentScanner::DirectiveContentScanner(Preprocessor* pp) : pp(pp){};
-int DirectiveContentScanner::get() {
-  const char ch = pp->cursor.currentChar();
-  pp->cursor.next();
-  return ch;
-}
-int DirectiveContentScanner::peek() { return pp->cursor.currentChar(); };
-bool DirectiveContentScanner::reachedEndOfInput() {
-  return !pp->reachedEndOfSection(pp->cursor) &&
-         isNewlineCharacter(pp->cursor.currentChar());
-}
-
-SectionContentScanner::SectionContentScanner(Preprocessor& pp, PPCursor& _c)
-    : pp(pp), cursor(_c) {}
-int SectionContentScanner::get() {
-  const auto ch = cursor.currentChar();
-  cursor.next();
-  return ch;
-}
-int SectionContentScanner::peek() { return cursor.currentChar(); }
-bool SectionContentScanner::reachedEndOfInput() {
-  return cursor.offset() >= pp.currentSectionEnd();
-}
-
-class IdentStrLexer {
-  IBaseScanner& scanner;
-
- public:
-  IdentStrLexer(IBaseScanner& scanner) : scanner(scanner){};
-  std::string scan();
-
-  static bool isStartOfAIdentifier(const char ch);
+PPScanner::PPScanner(PPImpl& pp, CodeBuffer& codeBuffer,
+                     std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+    : PPBaseScanner(codeBuffer, codeBuffer.section(pp.currentSection()),
+                    std::move(readUTF32)),
+      pp(pp) {
+  skipBackslashReturn();
 };
+
+bool PPScanner::reachedEndOfInput() const {
+  return _offset == pp.currentSectionEnd();
+}
+
+PPDirectiveScanner::PPDirectiveScanner(const PPScanner& scanner)
+    : PPBaseScanner(scanner), sectionID(scanner.ppImpl().currentSectionID()) {
+  skipBackslashReturn();
+};
+
+bool PPDirectiveScanner::reachedEndOfInput() const {
+  if (_offset == _codeBuffer.sectionEnd(sectionID)) return true;
+  const auto [ch, _] = readUTF32(_codeBuffer.pos(_offset));
+  return isNewlineCharacter(ch);
+}
 
 bool IdentStrLexer::isStartOfAIdentifier(const char ch) {
   return ch == '_' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z';
@@ -60,70 +69,45 @@ bool isFirstCharOfIdentifier(const char ch) {
   return std::isalpha(ch) || ch == '_';
 }
 
-bool Preprocessor::isStartOfAComment(const PPCursor& cursor) {
-  return lookaheadMatches(cursor, "/*");
-}
+/* PPImpl */
 
-bool Preprocessor::isSpace(const PPCursor& cursor, bool isInsideDirective) {
-  if (cursor.currentChar() > std::numeric_limits<unsigned char>::max())
-    return false;
-  if (isInsideDirective) return isDirectiveSpace(cursor.currentChar());
-  return std::isspace(cursor.currentChar());
-}
-void Preprocessor::skipComment(PPCursor& cursor) {
-  cursor.next().next();
-
-  while (!reachedEndOfSection(cursor) && !lookaheadMatches(cursor, "*/")) {
-    cursor.next();
-  }
-
-  cursor.next().next();
-}
-
-void Preprocessor::skipWhitespacesAndComments(PPCursor& cursor,
-                                              bool isInsideDirective) {
-  while (!reachedEndOfSection(cursor)) {
-    if (isSpace(cursor, isInsideDirective)) {
-      cursor.next();
-    } else if (isStartOfAComment(cursor)) {
-      skipComment(cursor);
-    } else {
-      break;
-    }
-  }
-}
-
-int Preprocessor::get() {
-  if (reachedEndOfInput(cursor)) {
+int PPImpl::get() {
+  if (reachedEndOfInput()) {
     return EOF;
   }
-  if (reachedEndOfSection(cursor)) {
+  if (scanner.reachedEndOfInput()) {
     exitSection();
     return get();
   }
-  if (identCursor) {
-    const char ch = cursor.currentChar();
-    cursor.next();
-    if (cursor.offset() == identCursor->offset()) {
-      identCursor = std::nullopt;
+  if (identScanner) {
+    const auto ch = scanner.get();
+    if (scanner.offset() == identScanner->offset()) {
+      identScanner = nullptr;
+      exitFullyScannedSections();
     }
     return ch;
   }
-  if (isStartOfASpaceOrAComment(cursor, false)) {
-    skipWhitespacesAndComments(cursor, false);
-    return ' ';
+  if (isSpace(scanner) || lookaheadMatches(scanner, "/*")) {
+    skipSpacesAndComments(scanner);
+
+    if (scanner.peek() == '#' && canParseDirectives) {
+      parseDirective();
+      return get();
+    } else {
+      exitFullyScannedSections();
+      return ' ';
+    }
   }
-  if (cursor.currentChar() == '#' && enabledProcessDirectives) {
-    parseDirective(cursor);
+  if (scanner.peek() == '#' && canParseDirectives) {
+    parseDirective();
     return get();
   }
 
-  enabledProcessDirectives = false;
+  canParseDirectives = false;
 
-  if (IdentStrLexer::isStartOfAIdentifier(cursor.currentChar())) {
-    identCursor = cursor;
-    SectionContentScanner scs(*this, *identCursor);
-    std::string identStr = IdentStrLexer(scs).scan();
+  if (IdentStrLexer::isStartOfAIdentifier(scanner.peek())) {
+    identScanner = std::make_unique<PPScanner>(scanner);
+    std::string identStr = IdentStrLexer(*identScanner).scan();
 
     const auto macroDef = setOfMacroDefinitions.find(identStr);
     if (macroDef == setOfMacroDefinitions.end()) {
@@ -131,8 +115,8 @@ int Preprocessor::get() {
       return get();
     }
 
-    cursor.setOffset(identCursor->offset());
-    identCursor = std::nullopt;
+    scanner.setOffset(identScanner->offset());
+    identScanner = nullptr;
 
     CodeBuffer::SectionID sectionID;
     std::string macroBody;
@@ -149,75 +133,69 @@ int Preprocessor::get() {
     return get();
   }
 
-  const auto ch = cursor.currentChar();
-  cursor.next();
+  const auto ch = scanner.get();
+  exitFullyScannedSections();
   return ch;
 }
 
-int Preprocessor::peek() { return cursor.currentChar(); }
+int PPImpl::peek() const { return 0; }
 
-bool Preprocessor::reachedEndOfInput() { return reachedEndOfInput(cursor); }
-
-bool Preprocessor::reachedEndOfInput(const PPCursor& cursor) {
-  while (!stackOfSectionID.empty() && reachedEndOfSection(cursor)) {
-    exitSection();
-  }
-
-  return stackOfSectionID.empty() &&
-         cursor.offset() == codeBuffer.sectionEnd(0);
+bool PPImpl::reachedEndOfInput() const {
+  return stackOfSectionID.empty() && ppReachedEnd(scanner.offset());
 }
 
-std::vector<MacroExpansionRecord>& Preprocessor::macroExpansionRecords() {
-  return vectorOfMacroExpansion;
-}
-
-void Preprocessor::fastForwardToFirstOutputCharacter(PPCursor& cursor) {
+void PPImpl::fastForwardToFirstOutputCharacter(PPBaseScanner& scanner) {
   while (true) {
-    skipSpaces(false);
+    skipSpaces(scanner);
 
-    if (cursor.currentChar() == '#') {
-      parseDirective(cursor);
-    } else if (isStartOfASpaceOrAComment(cursor, false)) {
-      skipWhitespacesAndComments(cursor, false);
+    if (scanner.peek() == '#') {
+      parseDirective();
+    } else if (scanner.peek() == ' ') {
+      skipSpacesAndComments(scanner);
     } else {
       break;
     }
   }
 }
 
-void Preprocessor::parseDirective(PPCursor& cursor) {
+void PPImpl::parseDirective() {
   using namespace std::literals::string_literals;
+  PPDirectiveScanner ppds{scanner};
+
   const auto startOffset = currentSection();
   std::string errorMsg;
   std::string hint;
 
-  cursor.next();  // ignore the leading #
-  skipSpaces(true);
+  ppds.get();  // ignore the leading #
+  skipSpaces(ppds, isDirectiveSpace);
 
   std::string directiveName;
-  while (!reachedEndOfSection(cursor) && !reachedEndOfLine(cursor) &&
-         !isSpace(cursor, true)) {
-    directiveName.push_back(cursor.currentChar());
-    cursor.next();
+
+  while (!ppds.reachedEndOfInput() && !isDirectiveSpace(ppds.peek())) {
+    directiveName.push_back(ppds.get());
   }
 
   if (directiveName == "") {
-    skipNewline(cursor);
+    scanner.setOffset(ppds.offset());
+    skipNewline(scanner);
     return;
   }
 
   if (directiveName == "define") {
-    skipWhitespacesAndComments(cursor, true);
+    skipSpacesAndComments(ppds, isDirectiveSpace);
 
-    if (!isFirstCharOfIdentifier(cursor.currentChar())) {
+    if (!IdentStrLexer::isStartOfAIdentifier(ppds.peek())) {
       errorMsg = hint = "macro names must be identifiers";
       goto fail;
     }
-    std::string macroName = IdentStrLexer(dcs).scan();
-    skipWhitespacesAndComments(cursor, true);
-    std::string macroBody = scanDirective(cursor);
-    skipNewline(cursor);
+
+    std::string macroName = IdentStrLexer(ppds).scan();
+    skipSpacesAndComments(ppds, isDirectiveSpace);
+    std::string macroBody = readAll(ppds);
     setOfMacroDefinitions.insert(MacroDefinition(macroName, macroBody));
+
+    scanner.setOffset(ppds.offset());
+    skipNewline(scanner);
   } else {
     errorMsg = hint = "Unknown preprocessing directive "s + directiveName;
     goto fail;
@@ -226,132 +204,74 @@ void Preprocessor::parseDirective(PPCursor& cursor) {
   return;
 
 fail:
-  skipDirective(cursor);
-  const CodeBuffer::Offset endOffset = cursor.offset();
+  skipAll(scanner);
+  const CodeBuffer::Offset endOffset = scanner.offset();
   const auto range = std::make_tuple(startOffset, endOffset);
   const auto error = Error({startOffset, endOffset}, errorMsg, errorMsg);
   errOut.reportsError(error);
 }
 
-void Preprocessor::skipNewline(PPCursor& cursor) {
-  if (cursor.currentChar() == '\r') cursor.next();
-  if (cursor.currentChar() == '\n') cursor.next();
+void PPImpl::skipNewline(PPBaseScanner& scanner) {
+  if (scanner.peek() == '\r') scanner.get();
+  if (scanner.peek() == '\n') scanner.get();
 }
 
-void Preprocessor::skipSpaces(bool isInsideDirective) {
-  while (isSpace(cursor, isInsideDirective)) {
-    if (!isInsideDirective && isNewlineCharacter(cursor.currentChar())) {
-      enabledProcessDirectives = true;
-    }
-    cursor.next();
-  }
-}
-
-void Preprocessor::skipDirective(PPCursor& cursor) {
-  while (!reachedEndOfLine(cursor) &&
-         !isNewlineCharacter(cursor.currentChar())) {
-    cursor.next();
-  }
-}
-
-std::string Preprocessor::scanDirective(PPCursor& cursor) {
-  std::string output;
-
-  while (!reachedEndOfLine(cursor)) {
-    while (!reachedEndOfLine(cursor) &&
-           !isDirectiveSpace(cursor.currentChar())) {
-      output.push_back(cursor.currentChar());
-      cursor.next();
-    }
-
-    skipWhitespacesAndComments(cursor, true);
-
-    if (!reachedEndOfLine(cursor)) {
-      output.push_back(' ');
-    }
-  }
-
-  return output;
-}
-
-bool Preprocessor::reachedEndOfSection(const PPCursor& cursor) {
-  const auto id = currentSectionID();
-  return cursor.offset() == codeBuffer.sectionEnd(id);
-}
-
-void Preprocessor::enterSection(CodeBuffer::SectionID id) {
+void PPImpl::enterSection(CodeBuffer::SectionID id) {
   stackOfSectionID.push_back(id);
-  stackOfStoredOffsets.push_back(cursor.offset());
-  cursor.setOffset(codeBuffer.section(id));
+  stackOfStoredOffsets.push_back(scanner.offset());
+  scanner.setOffset(codeBuffer.section(id));
 }
 
-void Preprocessor::exitSection() {
+void PPImpl::exitSection() {
   stackOfSectionID.pop_back();
   if (!stackOfStoredOffsets.empty()) {
-    cursor.setOffset(stackOfStoredOffsets.back());
+    scanner.setOffset(stackOfStoredOffsets.back());
     stackOfStoredOffsets.pop_back();
   }
 }
 
-bool Preprocessor::isStartOfASpaceOrAComment(const PPCursor& cursor,
-                                             bool isInsideDirective) {
-  return isSpace(cursor, isInsideDirective) || lookaheadMatches(cursor, "/*");
+bool PPImpl::reachedEndOfCurrentSection() const {
+  return scanner.reachedEndOfInput();
 }
 
-CodeBuffer::SectionID Preprocessor::currentSectionID() {
+void PPImpl::exitFullyScannedSections() {
+  while (!stackOfSectionID.empty() && reachedEndOfCurrentSection()) {
+    exitSection();
+  }
+}
+
+/* PPImpl */
+
+CodeBuffer::SectionID PPImpl::currentSectionID() const {
   return stackOfSectionID.empty() ? 0 : stackOfSectionID.back();
 }
 
-CodeBuffer::Offset Preprocessor::currentSection() {
+CodeBuffer::Offset PPImpl::currentSection() const {
   return codeBuffer.section(currentSectionID());
 }
 
-CodeBuffer::Offset Preprocessor::currentSectionEnd() {
+CodeBuffer::Offset PPImpl::currentSectionEnd() const {
   return codeBuffer.sectionEnd(currentSectionID());
 }
 
-bool Preprocessor::reachedEndOfLine(const PPCursor& c) {
-  return reachedEndOfSection(c) || isNewlineCharacter(c.currentChar());
-}
-
-bool Preprocessor::lookaheadMatches(const ICursor& cursor,
-                                    const std::string& s) {
-  auto copy = cursor.clone();
+bool PPImpl::lookaheadMatches(const PPBaseScanner& scanner,
+                              const std::string& s) {
+  auto copy = scanner.copy();
   for (const char ch : s) {
-    if (copy->currentChar() == EOF || copy->currentChar() != ch) return false;
-    copy->next();
+    if (copy->peek() == EOF || copy->peek() != ch) return false;
+    copy->get();
   }
 
   return true;
 }
 
-PPCursor::PPCursor(Preprocessor* pp, ICursor* cursor) noexcept
-    : pp(pp), cursor(cursor) {
-  while (cursor->offset() < pp->currentSectionEnd() - 1 &&
-         pp->lookaheadMatches(*cursor, "\\\n")) {
-    cursor->next().next();
-  }
+void PPBaseScanner::skipBackslashReturn() {
+  if (reachedEndOfInput()) return;
+  const auto [ch1, len1] = readUTF32(_codeBuffer.pos(_offset));
+  if (ch1 != '\\' || reachedEndOfInput()) return;
+  _offset += len1;
+  const auto [ch2, len2] = readUTF32(_codeBuffer.pos(_offset));
+  if (ch2 != '\n') return;
+  _offset += len1;
+  skipBackslashReturn();
 }
-
-std::uint32_t PPCursor::currentChar() const { return cursor->currentChar(); }
-
-PPCursor& PPCursor::next() {
-  const auto sectionID = pp->currentSectionID();
-  const auto sectionEnd = pp->codeBuffer.sectionEnd(sectionID);
-
-  if (cursor->offset() == sectionEnd) return *this;
-
-  cursor->next();
-  while (cursor->offset() < sectionEnd - 1 &&
-         pp->lookaheadMatches(*cursor, "\\\n")) {
-    cursor->next().next();
-  }
-
-  return *this;
-}
-
-PPCursor& PPCursor::setOffset(CodeBuffer::Offset newOffset) {
-  cursor->setOffset(newOffset);
-  return *this;
-}
-CodeBuffer::Offset PPCursor::offset() const { return cursor->offset(); }

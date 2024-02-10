@@ -16,8 +16,7 @@
 #include <vector>
 
 #include "code-buffer.h"
-#include "cursor.h"
-#include "encoding-cursor.h"
+#include "encoding.h"
 #include "error.h"
 #include "scanner.h"
 
@@ -65,155 +64,264 @@ struct IMacroExpansionRecords {
   ~IMacroExpansionRecords() = default;
 };
 
+bool isSpace(int ch);
 bool isDirectiveSpace(int ch);
 bool isNewlineCharacter(int ch);
 
-class Preprocessor;
-
-class PPCursor : public ICursor {
-  Preprocessor* pp;
-  ICursor* cursor;
-
- public:
-  PPCursor() = delete;
-  PPCursor(Preprocessor* pp, ICursor* cursor) noexcept;
-  PPCursor(const PPCursor& other) noexcept
-      : pp(other.pp), cursor(other.cursor->clone().release()) {}
-  PPCursor(PPCursor&& other) noexcept : pp(pp) {
-    std::swap(cursor, other.cursor);
-  }
-
-  PPCursor& next() override;
-  std::uint32_t currentChar() const override;
-  PPCursor& setOffset(CodeBuffer::Offset newOffset) override;
-  CodeBuffer::Offset offset() const override;
-  std::unique_ptr<ICursor> clone() const override {
-    return std::unique_ptr<ICursor>(new PPCursor(*this));
-  }
-  PPCursor& operator=(PPCursor other) {
-    using std::swap;
-    swap(this->cursor, other.cursor);
-    return *this;
-  }
-
-  ~PPCursor() {
-      delete cursor;
-  }
-};
-
-// Only use it when scanning a preprocessing directive's content.
-class DirectiveContentScanner : public IBaseScanner {
-  Preprocessor* const pp;
-
- public:
-  DirectiveContentScanner(Preprocessor* const _pp);
-  int get();
-  int peek();
-  bool reachedEndOfInput();
-};
-
-class SectionContentScanner : public IBaseScanner {
-  Preprocessor& pp;
-  PPCursor& cursor;
-
- public:
-  SectionContentScanner(Preprocessor& pp, PPCursor& cursor);
-  int get() override;
-  int peek() override;
-  bool reachedEndOfInput() override;
-};
+class PPImpl;
 
 template <typename T>
-concept CreateCursorFunc =
+concept CreatescannerFunc =
     requires(T func, const CodeBuffer& buffer, CodeBuffer::Offset offset) {
       { func(buffer, offset) };
     };
 
-class Preprocessor : IBaseScanner, IMacroExpansionRecords {
-  struct CompareMacroDefinition {
-    using is_transparent = std::true_type;
+struct CompareMacroDefinition {
+  using is_transparent = std::true_type;
 
-    bool operator()(const MacroDefinition& lhs,
-                    const MacroDefinition& rhs) const {
-      return lhs.name < rhs.name;
-    }
+  bool operator()(const MacroDefinition& lhs,
+                  const MacroDefinition& rhs) const {
+    return lhs.name < rhs.name;
+  }
 
-    bool operator()(const std::string& lhs, const MacroDefinition& rhs) const {
-      return lhs < rhs.name;
-    }
+  bool operator()(const std::string& lhs, const MacroDefinition& rhs) const {
+    return lhs < rhs.name;
+  }
 
-    bool operator()(const MacroDefinition& lhs, const std::string& rhs) const {
-      return lhs.name < rhs;
-    }
-  };
+  bool operator()(const MacroDefinition& lhs, const std::string& rhs) const {
+    return lhs.name < rhs;
+  }
+};
 
+class IdentStrLexer {
+  IBaseScanner& scanner;
+
+ public:
+  IdentStrLexer(IBaseScanner& scanner) : scanner(scanner){};
+  std::string scan();
+
+  static bool isStartOfAIdentifier(const char ch);
+};
+
+class PPBaseScanner : public IBaseScanner {
+ protected:
+  CodeBuffer& _codeBuffer;
+  CodeBuffer::Offset _offset;
+  std::function<std::tuple<int, int>(const unsigned char*)> readUTF32;
+
+ public:
+  PPBaseScanner(CodeBuffer& codeBuffer, CodeBuffer::Offset startOffset,
+            std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+      : _codeBuffer(codeBuffer),
+        _offset(startOffset),
+        readUTF32(std::move(readUTF32)) {}
+
+  int get() override {
+    if (reachedEndOfInput()) return EOF;
+    const auto [codepoint, codelen] = readUTF32(_codeBuffer.pos(_offset));
+    _offset += codelen;
+    skipBackslashReturn();
+    return codepoint;
+  }
+
+  int peek() const override {
+    // TODO collapses comments and spaces into one.
+    if (reachedEndOfInput()) return EOF;
+    const auto [codepoint, _] = readUTF32(_codeBuffer.pos(_offset));
+    return codepoint;
+  }
+
+  void setOffset(CodeBuffer::Offset offset) { _offset = offset; }
+  CodeBuffer::Offset offset() const { return _offset; }
+
+  CodeBuffer& codeBuffer() { return _codeBuffer; }
+  const CodeBuffer& codeBuffer() const { return _codeBuffer; }
+
+  virtual std::unique_ptr<PPBaseScanner> copy() const = 0;
+
+ protected:
+  void skipBackslashReturn();
+};
+
+class PPScanner : public PPBaseScanner {
+  PPImpl& pp;
+
+ public:
+  PPScanner(PPImpl& pp, CodeBuffer& codeBuffer,
+            std::function<std::tuple<int, int>(const unsigned char*)> readUTF32);
+
+  bool reachedEndOfInput() const override;
+  PPImpl& ppImpl() { return pp; }
+  const PPImpl& ppImpl() const { return pp; }
+  std::unique_ptr<PPBaseScanner> copy() const {
+    return std::make_unique<PPScanner>(*this);
+  }
+};
+
+class PPDirectiveScanner : public PPBaseScanner {
+  CodeBuffer::SectionID sectionID;
+
+ public:
+  PPDirectiveScanner(const PPScanner& scanner);
+  bool reachedEndOfInput() const override;
+
+  std::unique_ptr<PPBaseScanner> copy() const {
+    return std::make_unique<PPDirectiveScanner>(*this);
+  }
+};
+
+class PPImpl : public IBaseScanner {
   CodeBuffer& codeBuffer;
   IReportError& errOut;
+  std::set<MacroDefinition, CompareMacroDefinition>& setOfMacroDefinitions;
+  const std::vector<std::unique_ptr<std::string>>* macroArguments;
+  std::map<std::string, CodeBuffer::SectionID>& codeCache;
 
-  PPCursor cursor;
-  std::optional<PPCursor> identCursor;
-  DirectiveContentScanner dcs;
-
-  // A cache for macro that has been expanded before.
-  std::map<std::string, CodeBuffer::SectionID> codeCache;
+  std::function<bool(CodeBuffer::Offset)> ppReachedEnd;
+  std::function<bool(CodeBuffer::Offset)> doesScannerReachedEnd;
 
   std::vector<CodeBuffer::SectionID> stackOfSectionID;
   std::vector<CodeBuffer::Offset> stackOfStoredOffsets;
-  std::vector<MacroExpansionRecord> vectorOfMacroExpansion;
-  std::set<MacroDefinition, CompareMacroDefinition> setOfMacroDefinitions;
 
-  bool enabledProcessDirectives = true;
+  std::unique_ptr<PPScanner> identScanner;
+  PPScanner scanner;
+  
+  bool canParseDirectives;
 
-  friend class DirectiveContentScanner;
-  friend class SectionContentScanner;
-  friend class PPCursor;
+  friend class PPDirectiveScanner;
+  friend class PPScanner;
 
  public:
-  template <typename T>
-    requires CreateCursorFunc<T>
-  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut, T createCursorFunc)
+  PPImpl(
+      CodeBuffer& codeBuffer, IReportError& errOut,
+      std::set<MacroDefinition, CompareMacroDefinition>& setOfMacroDefinitions,
+      const std::vector<std::unique_ptr<std::string>>* macroArguments,
+      std::map<std::string, CodeBuffer::SectionID>& codeCache,
+      CodeBuffer::Offset startOffset,
+      std::function<bool(CodeBuffer::Offset)>& ppReachedEnd,
+      std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
       : codeBuffer(codeBuffer),
         errOut(errOut),
-        cursor(this,
-               createCursorFunc(codeBuffer, codeBuffer.section(0)).release()),
-        dcs(this) {
-    fastForwardToFirstOutputCharacter(cursor);
+        setOfMacroDefinitions(setOfMacroDefinitions),
+        macroArguments(macroArguments),
+        codeCache(codeCache),
+        ppReachedEnd(ppReachedEnd),
+        doesScannerReachedEnd([this](CodeBuffer::Offset offset) {
+          return this->ppReachedEnd(offset) || offset == currentSectionEnd();
+        }),
+        scanner(*this, codeBuffer, readUTF32) {
+    fastForwardToFirstOutputCharacter(scanner);
   }
 
-  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut)
-      : Preprocessor(codeBuffer, errOut, UTF8Cursor::create) {}
-
-  // Inherited via IScanner
   int get() override;
-  int peek() override;
-  bool reachedEndOfInput() override;
-
-  // Inherited via IMacroExpansionRecords
-  std::vector<MacroExpansionRecord>& macroExpansionRecords() override;
+  int peek() const override;
+  bool reachedEndOfInput() const override;
 
  private:
-  void addPreprocessorDirective(PreprocessorDirective directive);
-  CodeBuffer::SectionID currentSectionID();
-  CodeBuffer::Offset currentSection();
-  CodeBuffer::Offset currentSectionEnd();
-  void enterSection(CodeBuffer::SectionID);
+  bool reachedEndOfCurrentSection() const;
+  template <typename T>
+  bool isSpace(const PPBaseScanner& scanner, T&& isSpaceFn) {
+    return isSpaceFn(scanner.peek());
+  }
+  bool isSpace(const PPBaseScanner& scanner) { return isSpace(scanner, ::isSpace); }
+
+  template <typename T>
+  void skipSpacesAndComments(PPBaseScanner& scanner, T&& isSpaceFn);
+  void skipSpacesAndComments(PPBaseScanner& scanner) {
+    return skipSpacesAndComments(scanner, ::isSpace);
+  }
+  void fastForwardToFirstOutputCharacter(PPBaseScanner& scanner);
+  void parseDirective();
+  void skipNewline(PPBaseScanner& scanner);
+  template <typename T>
+  void skipSpaces(PPBaseScanner& scanner, T&& isSpace);
+  void skipSpaces(PPBaseScanner& scanner) { return skipSpaces(scanner, ::isSpace); }
+  void enterSection(CodeBuffer::SectionID id);
   void exitSection();
-  void fastForwardToFirstOutputCharacter(PPCursor&);
-  void parseDirective(PPCursor&);
-  void skipNewline(PPCursor&);
-  void skipSpaces(bool isInsideDirective);
-  void skipDirective(PPCursor&);
-  void skipWhitespacesAndComments(PPCursor& cursor, bool isInsideDirective);
-  void skipComment(PPCursor&);
-  std::string scanDirective(PPCursor&);
-  bool isStartOfASpaceOrAComment(const PPCursor& cursor,
-                                 bool isInsideDirective);
-  bool isSpace(const PPCursor& cursor, bool isInsideDirective);
-  bool isStartOfAComment(const PPCursor& cursor);
-  bool reachedEndOfSection(const PPCursor&);
-  bool reachedEndOfLine(const PPCursor&);
-  bool reachedEndOfInput(const PPCursor&);
-  bool lookaheadMatches(const ICursor& cursor, const std::string& chars);
+  CodeBuffer::SectionID currentSectionID() const;
+  CodeBuffer::Offset currentSection() const;
+  CodeBuffer::Offset currentSectionEnd() const;
+  bool lookaheadMatches(const PPBaseScanner& scanner, const std::string& s);
+  void exitFullyScannedSections();
 };
+
+template <typename T>
+void PPImpl::skipSpacesAndComments(PPBaseScanner& scanner, T&& isSpaceFn) {
+  while (!scanner.reachedEndOfInput()) {
+    if (isNewlineCharacter(scanner.peek())) {
+      canParseDirectives = true;
+      skipNewline(scanner);
+      continue;
+    }
+
+    if (isSpaceFn(scanner.peek())) {
+      scanner.get();
+      continue;
+    }
+
+    if (lookaheadMatches(scanner, "/*")) {
+      scanner.get();
+      scanner.get();
+
+      while (!scanner.reachedEndOfInput() && !lookaheadMatches(scanner, "*/")) {
+        scanner.get();
+      }
+
+      if (scanner.reachedEndOfInput()) {
+        // TODO: THROW ERROR HERE
+        return;
+      }
+
+      scanner.get();
+      scanner.get();
+      continue;
+    }
+
+    break;
+  }
+}
+
+template <typename T>
+void PPImpl::skipSpaces(PPBaseScanner& scanner, T&& isSpaceFn) {
+  while (!scanner.reachedEndOfInput() && isSpaceFn(scanner.peek())) {
+    scanner.get();
+  }
+}
+
+class Preprocessor : IBaseScanner {
+  CodeBuffer& codeBuffer;
+  IReportError& errOut;
+  std::function<std::tuple<int, int>(const unsigned char*)> readUTF32;
+  std::function<bool(CodeBuffer::Offset)> toEndOfFirstSection;
+
+  // A cache for macro that has been expanded before.
+  std::map<std::string, CodeBuffer::SectionID> codeCache;
+  std::set<MacroDefinition, CompareMacroDefinition> setOfMacroDefinitions;
+
+  PPImpl ppImpl;
+
+ public:
+  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut,
+               std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+      : codeBuffer(codeBuffer),
+        errOut(errOut),
+        readUTF32(std::move(readUTF32)),
+        toEndOfFirstSection([this](CodeBuffer::Offset offset) {
+          return offset == this->codeBuffer.sectionEnd(0);
+        }),
+        ppImpl(codeBuffer, errOut, setOfMacroDefinitions, nullptr, codeCache,
+               codeBuffer.section(0), toEndOfFirstSection, this->readUTF32) {}
+
+  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut)
+      : Preprocessor(codeBuffer, errOut, utf8) {}
+
+  // Inherited via IScanner
+  int get() override { return ppImpl.get(); }
+  int peek() const override { return ppImpl.peek(); }
+  bool reachedEndOfInput() const override { return ppImpl.reachedEndOfInput(); }
+};
+
+void skipAll(PPBaseScanner& scanner);
+std::string readAll(PPBaseScanner& scanner);
 
 #endif  // !TPLCC_PREPROCESSOR_H

@@ -7,8 +7,8 @@
 
 struct IBaseScanner {
   virtual int get() = 0;
-  virtual int peek() = 0;
-  virtual bool reachedEndOfInput() = 0;
+  virtual int peek() const = 0;
+  virtual bool reachedEndOfInput() const = 0;
 };
 
 #endif // !TPLCC_SCANNER_H

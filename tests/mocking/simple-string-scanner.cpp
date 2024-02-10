@@ -4,7 +4,7 @@ int SimpleStringScanner::get() {
 	return reachedEndOfInput() ? EOF : input[cursor++];
 }
 
-int SimpleStringScanner::peek() {
+int SimpleStringScanner::peek() const {
 	return reachedEndOfInput() ? EOF : input[cursor];
 }
 
@@ -31,7 +31,7 @@ void SimpleStringScanner::ignoreN(size_t n) {
 		get();
 	}
 }
-bool SimpleStringScanner::reachedEndOfInput() {
+bool SimpleStringScanner::reachedEndOfInput() const {
 	return cursor == input.size();
 }
 

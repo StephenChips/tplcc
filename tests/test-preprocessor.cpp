@@ -87,7 +87,7 @@ BA\
 R F\
 OO)";
 
-  EXPECT_EQ(scanInput(str), "int a = 20");
+  EXPECT_EQ(scanInput(str), "int a = 20 ");
 }
 
 TEST_F(TestPreprocessor, directive_should_be_at_the_start_of_the_line) {
@@ -146,7 +146,7 @@ TEST_F(TestPreprocessor, define_function_macro) {
   const std::string macroMCALL{"#define MCALL(func, x) func(x)  \n"};
 
   /* The simplest situation */
-  EXPECT_EQ(scanInput(macroDIV + "DIV(4, 3)"), "((4) / (3)");
+  EXPECT_EQ(scanInput(macroDIV + "DIV(4, 3)"), "((4) / (3))");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
   /* Multiple pp-tokens in an argument */

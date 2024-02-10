@@ -11,11 +11,11 @@ class SimpleStringScanner : public ILexerScanner {
 public:
 	SimpleStringScanner(std::string input) : input(std::move(input)) {}
 	virtual int get() override;
-	virtual int peek() override;
+	virtual int peek() const override;
 	virtual std::string peekN(size_t n) override;
 	virtual void ignore() override;
 	virtual void ignoreN(size_t n) override;
-	virtual bool reachedEndOfInput() override;
+	virtual bool reachedEndOfInput() const override;
 	virtual std::uint32_t offset() override;
 };
 
