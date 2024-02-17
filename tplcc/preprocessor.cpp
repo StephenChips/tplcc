@@ -1,7 +1,37 @@
 #include "preprocessor.h"
 
+#include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <cstdint>
+#include <format>
+#include <stdexcept>
+
+std::optional<std::size_t> findIndexOfParameter(
+    const MacroDefinition& macroDef, const std::string& parameterName) {
+  const auto& parameters = macroDef.parameters;
+  const auto it =
+      std::find(parameters.begin(), parameters.end(), parameterName);
+  if (it == parameters.end()) {
+    return std::nullopt;
+  } else {
+    return it - parameters.begin();
+  }
+}
+
+std::string createFunctionLikeMacroCacheKey(
+    const std::string& macroName, const std::vector<std::string>& arguments) {
+  if (arguments.empty()) return macroName + "()";
+
+  std::string output = macroName + "(" + arguments[0];
+
+  for (std::size_t i = 1; i < arguments.size(); i++) {
+    output += ',';
+    output += arguments[i];
+  }
+
+  return output + ")";
+}
 
 void skipAll(PPBaseScanner& scanner) {
   while (scanner.get() != EOF)
@@ -26,8 +56,9 @@ bool isSpace(int ch) {
 bool isDirectiveSpace(int ch) { return ch == ' ' || ch == '\t'; }
 bool isNewlineCharacter(int ch) { return ch == '\r' || ch == '\n'; }
 
-PPScanner::PPScanner(PPImpl& pp, CodeBuffer& codeBuffer,
-                     std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+PPScanner::PPScanner(
+    PPImpl& pp, CodeBuffer& codeBuffer,
+    std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
     : PPBaseScanner(codeBuffer, codeBuffer.section(pp.currentSection()),
                     std::move(readUTF32)),
       pp(pp) {
@@ -45,15 +76,15 @@ PPDirectiveScanner::PPDirectiveScanner(const PPScanner& scanner)
 
 bool PPDirectiveScanner::reachedEndOfInput() const {
   if (_offset == _codeBuffer.sectionEnd(sectionID)) return true;
-  const auto [ch, _] = readUTF32(_codeBuffer.pos(_offset));
+  const auto [ch, _] = _readUTF32(_codeBuffer.pos(_offset));
   return isNewlineCharacter(ch);
 }
 
-bool IdentStrLexer::isStartOfAIdentifier(const char ch) {
+bool isStartOfIdentifier(int ch) {
   return ch == '_' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z';
 }
 
-std::string IdentStrLexer::scan() {
+std::string parseIdentifier(IBaseScanner& scanner) {
   std::string result;
 
   result.push_back(scanner.get());
@@ -71,6 +102,42 @@ bool isFirstCharOfIdentifier(const char ch) {
 
 /* PPImpl */
 
+/*
+ * Problem:
+ *
+ * If a macro is expanded to an empty string, and it's at the end of the input,
+ * for example:
+ *
+ * ```
+ * #define ID(x) x
+ *
+ * hello ID()
+ * ```
+ *
+ * the preprocessor has reached the end before we expand the macro, yet it
+ * cannot know such fact until is actually expand the macro and find out if the
+ * macro is expanded to nothing. For now `reachedEndOfInput` checks the internal
+ * scanner's offset to determine if it has reached the end. It doesn't changes
+ * or copy it scanner. Without doing that, It is not possible for it to know if
+ * the pp has reached the end.
+ *
+ * Solution:
+ *
+ * Implement the peek() method. Inside the method it will copy the current
+ * scanner and try getting the next character. if the pp has reached the end, it
+ * will return EOF. Internally we all uses `peek() == EOF` to check if we've
+ * reached the end, and `reachedTheEndOfInput` is only used by the user of a
+ * preprocessor.
+ *
+ * Then, the reachedTheEndOfInput will only be a simple function that checks if
+ * current `peek()` equals to `EOF`:
+ *
+ * bool reachedEndOfInput() {
+ *     return peek() == EOF;
+ * }
+ *
+ *
+ */
 int PPImpl::get() {
   if (reachedEndOfInput()) {
     return EOF;
@@ -79,10 +146,10 @@ int PPImpl::get() {
     exitSection();
     return get();
   }
-  if (identScanner) {
+  if (identOffset) {
     const auto ch = scanner.get();
-    if (scanner.offset() == identScanner->offset()) {
-      identScanner = nullptr;
+    if (scanner.offset() == identOffset) {
+      identOffset = std::nullopt;
       exitFullyScannedSections();
     }
     return ch;
@@ -105,31 +172,14 @@ int PPImpl::get() {
 
   canParseDirectives = false;
 
-  if (IdentStrLexer::isStartOfAIdentifier(scanner.peek())) {
-    identScanner = std::make_unique<PPScanner>(scanner);
-    std::string identStr = IdentStrLexer(*identScanner).scan();
-
-    const auto macroDef = setOfMacroDefinitions.find(identStr);
-    if (macroDef == setOfMacroDefinitions.end()) {
-      // fallback and get each characters
-      return get();
-    }
-
-    scanner.setOffset(identScanner->offset());
-    identScanner = nullptr;
-
-    CodeBuffer::SectionID sectionID;
-    std::string macroBody;
-    const auto iter = codeCache.find(macroDef->name);
-    if (iter == codeCache.end()) {
-      sectionID = codeBuffer.addSection(macroDef->body);
-      codeCache.insert({macroDef->name, sectionID});
+  if (isStartOfIdentifier(scanner.peek())) {
+    auto [sectionID, endOffset] = tryExpandingMacro(scanner, nullptr, nullptr);
+    if (sectionID) {
+      scanner.setOffset(endOffset);
+      enterSection(*sectionID);
     } else {
-      sectionID = iter->second;
+      identOffset = endOffset;
     }
-
-    enterSection(sectionID);
-
     return get();
   }
 
@@ -142,6 +192,238 @@ int PPImpl::peek() const { return 0; }
 
 bool PPImpl::reachedEndOfInput() const {
   return stackOfSectionID.empty() && ppReachedEnd(scanner.offset());
+}
+
+/*
+identifier <- parse the identifier first
+
+1. expand it as object-like macro if there is an object-like macro definition
+whose name is same as the identifier.
+
+2. expand it as function-like macro if there is a funciton-like macro defintion
+whose name is same as the identifier, and there is a argument list right
+behind the identifier
+
+3. otherwise do not expand the macro.
+identScanner = copy current scanner
+identifier = parseIdentifier(identScanner)
+
+macro definition := find macro definition with identifier
+
+if macro definition isn't found {
+scan the text char by char.
+}
+
+if the macro definition is a object-like macro {
+expand it.
+}
+
+if the macro definition is a function-like macro {
+if it is followed by an argument list {
+     arguments = parseMacroArgs scanner.
+     expand the macro (if it's cached, return the cached string directly)
+     enter and scan the new section.
+} else {
+    scan the text char by cahr.
+}
+}
+
+func parseMacroArgs (scanner) {
+skip '(' at the beginning,
+}
+*/
+
+std::tuple<std::optional<CodeBuffer::SectionID>, CodeBuffer::Offset>
+PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
+                          const MacroDefinition* const macroDefContext,
+                          const std::vector<std::string>* const argContext) {
+  assert(macroDefContext == nullptr && argContext == nullptr ||
+         macroDefContext != nullptr && argContext != nullptr &&
+             macroDefContext->parameters.size() == argContext->size());
+
+  auto copy = copyUnique(scanner);
+  std::string identStr = parseIdentifier(*copy);
+
+  const auto macroDef = setOfMacroDefinitions.find(identStr);
+  if (macroDef == setOfMacroDefinitions.end() ||
+      macroDef->type == MacroType::FUNCTION_LIKE_MACRO &&
+          !copy->reachedEndOfInput() && copy->peek() != '(') {
+    return {std::nullopt, copy->offset()};
+  }
+
+  std::string key;
+  std::vector<std::string> arguments;
+  if (macroDef->type == MacroType::FUNCTION_LIKE_MACRO) {
+    arguments =
+        parseFunctionLikeMacroArgumentList(*copy, macroDefContext, argContext);
+    key = createFunctionLikeMacroCacheKey(macroDef->name, arguments);
+  } else {
+    key = macroDef->name;
+  }
+
+  if (const auto iter = codeCache.find(key); iter != codeCache.end()) {
+    return {iter->second, copy->offset()};
+  }
+
+  std::string expandedText;
+  if (macroDef->type == MacroType::FUNCTION_LIKE_MACRO) {
+    expandedText = expandFunctionLikeMacro(*macroDef, arguments);
+  } else {
+    expandedText = macroDef->body;
+  }
+
+  CodeBuffer::SectionID sectionID = codeBuffer.addSection(expandedText);
+  codeCache.insert({macroDef->name, sectionID});
+
+  return {sectionID, copy->offset()};
+}
+
+std::vector<std::string> PPImpl::parseFunctionLikeMacroArgumentList(
+    ICopyableOffsetScanner& scanner,
+    const MacroDefinition* const macroDefContext,
+    const std::vector<std::string>* const argContext) {
+  std::vector<std::string> argumentList;
+
+  scanner.get();  // skip the beginning '('
+
+  if (scanner.peek() == ')') {
+    scanner.get();  // skip the ending ')'
+
+    // If there is nothing inside an argument list, e.g. ID(), the
+    // macro will still have a empty string as its only argument.
+    argumentList.push_back("");
+    return argumentList;
+  }
+
+  std::string arg =
+      parseFunctionLikeMacroArgument(scanner, macroDefContext, argContext);
+  argumentList.push_back(std::move(arg));
+
+  while (scanner.peek() != ')') {
+    if (scanner.peek() != ',') {
+      // should return error to the parent
+      throw std::runtime_error("expects a ','");
+    }
+    scanner.get();  // skip ','
+
+    std::string arg =
+        parseFunctionLikeMacroArgument(scanner, macroDefContext, argContext);
+    argumentList.push_back(std::move(arg));
+  }
+
+  scanner.get();  // skip the ending ')'
+  return argumentList;
+}
+
+std::string PPImpl::expandFunctionLikeMacro(
+    const MacroDefinition& macroDef,
+    const std::vector<std::string>& arguments) {
+  if (macroDef.parameters.size() != arguments.size()) {
+    throw std::runtime_error(std::format(
+        "The macro {} requires {} argument(s), but got {}.", macroDef.name,
+        macroDef.parameters.size(), arguments.size()));
+  }
+
+  RawBufferScanner rbs(macroDef.body.c_str(), macroDef.body.size(),
+                       scanner.byteDecoder());
+  std::string output;
+
+  while (!rbs.reachedEndOfInput()) {
+    if (isStartOfIdentifier(rbs.peek())) {
+      const auto ident = parseIdentifier(*copyUnique(rbs));
+      if (const auto index = findIndexOfParameter(macroDef, ident)) {
+        output += arguments[*index];
+        rbs.setOffset(rbs.offset() + ident.size());
+        continue;
+      }
+
+      const auto [sectionID, endOffset] =
+          tryExpandingMacro(rbs, &macroDef, &arguments);
+      CodeBuffer::Offset startOffset;
+      std::size_t size;
+
+      if (sectionID) {
+        startOffset = codeBuffer.section(*sectionID);
+        size = codeBuffer.sectionSize(*sectionID);
+      } else {
+        startOffset = rbs.offset();
+        size = endOffset - rbs.offset();
+      }
+
+      const auto startPos = codeBuffer.pos(startOffset);
+      output.append(reinterpret_cast<const char*>(startPos), size);
+
+      rbs.setOffset(endOffset);
+    } else {
+      output += rbs.get();
+    }
+  }
+
+  return output;
+}
+
+std::string PPImpl::parseFunctionLikeMacroArgument(
+    ICopyableOffsetScanner& scanner,
+    const MacroDefinition* const macroDefContext,
+    const std::vector<std::string>* const argContext) {
+  std::string output;
+  int parenthesisLevel = 0;
+
+  // skip leading spaces
+  while (isSpace(scanner)) scanner.get();
+
+  while (!scanner.reachedEndOfInput()) {
+    if (parenthesisLevel == 0) {
+      if (scanner.peek() == ',') break;
+      if (scanner.peek() == ')') break;
+    }
+
+    if (scanner.peek() == ')') {
+      parenthesisLevel--;
+    } else if (scanner.peek() == '(') {
+      parenthesisLevel++;
+    }
+
+    if (isSpace(scanner)) {
+      while (isSpace(scanner)) scanner.get();
+      if (!scanner.reachedEndOfInput()) {
+        output += ' ';
+      }
+      continue;
+    }
+
+    if (isStartOfIdentifier(scanner.peek())) {
+      const auto ident = parseIdentifier(*copyUnique(scanner));
+      if (macroDefContext) {
+        if (auto index = findIndexOfParameter(*macroDefContext, ident)) {
+          output += argContext->operator[](*index);
+          scanner.setOffset(scanner.offset() + ident.size());
+          continue;
+        }
+      }
+
+      const auto [sectionID, endOffset] =
+          tryExpandingMacro(scanner, macroDefContext, argContext);
+      CodeBuffer::Offset startOffset;
+      std::size_t size;
+      if (sectionID) {
+        startOffset = codeBuffer.section(*sectionID);
+        size = codeBuffer.sectionSize(*sectionID);
+      } else {
+        startOffset = scanner.offset();
+        size = endOffset - scanner.offset();
+      }
+
+      const auto startPos = codeBuffer.pos(startOffset);
+      output.append(reinterpret_cast<const char*>(startPos), size);
+
+      scanner.setOffset(endOffset);
+    } else {
+      output += scanner.get();
+    }
+  }
+
+  return output;
 }
 
 void PPImpl::fastForwardToFirstOutputCharacter(PPBaseScanner& scanner) {
@@ -182,17 +464,37 @@ void PPImpl::parseDirective() {
   }
 
   if (directiveName == "define") {
-    skipSpacesAndComments(ppds, isDirectiveSpace);
+    MacroType macroType = MacroType::OBJECT_LIKE_MACRO;
+    std::vector<std::string> parameters;
 
-    if (!IdentStrLexer::isStartOfAIdentifier(ppds.peek())) {
+    skipSpacesAndComments(ppds, isDirectiveSpace);
+    if (!isStartOfIdentifier(ppds.peek())) {
       errorMsg = hint = "macro names must be identifiers";
       goto fail;
     }
 
-    std::string macroName = IdentStrLexer(ppds).scan();
+    std::string macroName = parseIdentifier(ppds);
+    if (ppds.peek() == '(') {
+      auto result = parseFunctionLikeMacroParameters(ppds);
+      if (auto msg = std::get_if<ErrorMessage>(&result)) {
+        errorMsg = std::move(msg->errorMessage);
+        hint = std::move(msg->hint);
+        goto fail;
+      }
+
+      macroType = MacroType::FUNCTION_LIKE_MACRO;
+      parameters = std::move(std::get<std::vector<std::string>>(result));
+    }
+
     skipSpacesAndComments(ppds, isDirectiveSpace);
     std::string macroBody = readAll(ppds);
-    setOfMacroDefinitions.insert(MacroDefinition(macroName, macroBody));
+
+    if (macroType == MacroType::OBJECT_LIKE_MACRO) {
+      setOfMacroDefinitions.insert(MacroDefinition(macroName, macroBody));
+    } else {
+      setOfMacroDefinitions.insert(
+          MacroDefinition(macroName, parameters, macroBody));
+    }
 
     scanner.setOffset(ppds.offset());
     skipNewline(scanner);
@@ -267,11 +569,45 @@ bool PPImpl::lookaheadMatches(const PPBaseScanner& scanner,
 
 void PPBaseScanner::skipBackslashReturn() {
   if (reachedEndOfInput()) return;
-  const auto [ch1, len1] = readUTF32(_codeBuffer.pos(_offset));
+  const auto [ch1, l1] = _readUTF32(_codeBuffer.pos(_offset));
   if (ch1 != '\\' || reachedEndOfInput()) return;
-  _offset += len1;
-  const auto [ch2, len2] = readUTF32(_codeBuffer.pos(_offset));
+  _offset++;
+  const auto [ch2, l2] = _readUTF32(_codeBuffer.pos(_offset));
   if (ch2 != '\n') return;
-  _offset += len1;
+  _offset++;
   skipBackslashReturn();
+}
+
+// paraList -> ( )
+// paraList | ( id restOfParameters )
+// restOfParameters -> ''
+//      |  , id restOfParameters
+//
+std::variant<std::vector<std::string>, ErrorMessage>
+PPImpl::parseFunctionLikeMacroParameters(PPBaseScanner& scanner) {
+  std::vector<std::string> parameters;
+
+  scanner.get();
+  skipSpacesAndComments(scanner);
+
+  if (scanner.peek() == ')') {
+    scanner.get();
+    return parameters;
+  }
+
+  const auto identifier = parseIdentifier(scanner);
+  parameters.push_back(identifier);
+
+  while (!scanner.reachedEndOfInput() && scanner.peek() != ')') {
+    if (scanner.peek() != ',') {
+      return ErrorMessage("Expected ',' or ')' here.");
+    }
+    scanner.get();  // skip , (ignore error conditions for now)
+    skipSpacesAndComments(scanner);
+    const auto identifier = parseIdentifier(scanner);
+    parameters.push_back(identifier);
+  }
+
+  scanner.get();
+  return parameters;
 }

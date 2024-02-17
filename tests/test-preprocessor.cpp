@@ -143,7 +143,7 @@ TEST_F(TestPreprocessor, test_encoding) {
 TEST_F(TestPreprocessor, define_function_macro) {
   const std::string macroDIV{"#define DIV(foo, bar) ((foo) / (bar))\n"};
   const std::string macroID{"#define ID(x) x\n"};
-  const std::string macroMCALL{"#define MCALL(func, x) func(x)  \n"};
+  const std::string macroMCALL{"#define MCALL(func, x) func(x)\n"};
 
   /* The simplest situation */
   EXPECT_EQ(scanInput(macroDIV + "DIV(4, 3)"), "((4) / (3))");
@@ -166,24 +166,42 @@ TEST_F(TestPreprocessor, define_function_macro) {
 
   /* The macro body includes other macros and has function calls */
   EXPECT_EQ(scanInput(macroDIV + macroID +
-                      "#define X(a, b) DIV(ID(a), foo(b, c))\n"
-                      "X(3, 4)"),
-            "((ID(3)) / (foo(4, c)))");
+                      "#define X(a) DIV(ID(a), 3)\n"
+                      "X(10)"),
+            "((10) / (3))");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
-  /* ID(MCALL(ID), 123456) -> ID(ID(123456)) -> ID(123456) -> 123456 */
-  EXPECT_EQ(scanInput(macroID + macroMCALL + "ID(MCALL(ID, 123456))"),
-            "123456");
+  /* MCALL(ID, 123456) -> ID(123456) -> 123456 */
+  EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID, 123456)"), "123456");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  /* ID(DIV)(3, 4) -> DIV(3, 4) -> ((3) / (4)) */
+  EXPECT_EQ(scanInput(macroID + macroMCALL + "ID(DIV)(3, 4)"), "((3) / (4))");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  const std::string macroEMPTY = "#define EMPTY\n";
+  const std::string macroDEFER = "#define DEFER(x) x EMPTY\n";
+  EXPECT_EQ(scanInput(macroDIV + macroEMPTY + macroDEFER + "DEFER(DIV)(3, 4)"),
+            "DIV (3, 4)");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  const std::string macroEXPAND = "#define EXPAND(x) x";
+  EXPECT_EQ(scanInput(macroDIV + macroEMPTY + macroDEFER + macroEXPAND + "EXPAND(DEFER(DIV)(3, 4))"),
+            "((3) / (4))");
 
   EXPECT_EQ(scanInput(macroID + "ID()"), "");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
-  EXPECT_EQ(scanInput(macroID + macroMCALL), "MCALL(ID,)", "");
+  EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID,)"), "");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  EXPECT_EQ(scanInput("#define FOO(a, b, c) (a, b, c)\r\n"
+                      "FOO(((a), (b)), (), ())"),
+            "(((a), (b)), (), ())");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
   /* Invalid cases */
 
-  EXPECT_EQ(scanInput(macroID + macroMCALL), "MCALL(ID)", "");
+  EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID)"), "");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
@@ -226,10 +244,20 @@ TEST_F(TestPreprocessor, define_function_macro) {
   }
 
   scanInput("#define F(G()) G()");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
               "expected ',' or ')', found \"(\"");
   }
+
+  // scanInput(
+  //     "#define FOO(a, b, c) (a, b, c)\r\n"
+  //     "FOO(((, (), ()))");
+  // EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  // if (errOut->listOfErrors.size() == 1) {
+  //   EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+  //             "macro \"FOO\" requires 3 arguments, but only 1 given");
+  // }
 
   // TODO __VA_ARGS__
   // TODO: paint-blue

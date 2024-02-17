@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -20,18 +21,32 @@
 #include "error.h"
 #include "scanner.h"
 
+struct ErrorMessage {
+  std::string errorMessage;
+  std::string hint = "";
+
+  ErrorMessage(std::string errorMessage)
+      : errorMessage(std::move(errorMessage)){};
+
+  ErrorMessage(std::string errorMessage, std::string hint)
+      : errorMessage(std::move(errorMessage)), hint(std::move(hint)) {}
+};
+
+enum class MacroType { OBJECT_LIKE_MACRO, FUNCTION_LIKE_MACRO };
+
 struct MacroDefinition {
-  enum MacroType { OBJECT_LIKE_MACRO, FUNCTION_LIKE_MACRO } type;
+  MacroType type;
   std::string name;
   std::vector<std::string> parameters;
   std::string body;
 
   MacroDefinition(std::string name, std::string body,
-                  MacroType type = OBJECT_LIKE_MACRO)
+                  MacroType type = MacroType::OBJECT_LIKE_MACRO)
       : name(std::move(name)), body(std::move(body)), type(type){};
 
   MacroDefinition(std::string name, std::vector<std::string> parameters,
-                  std::string body, MacroType type = FUNCTION_LIKE_MACRO)
+                  std::string body,
+                  MacroType type = MacroType::FUNCTION_LIKE_MACRO)
       : name(std::move(name)),
         body(std::move(body)),
         parameters(std::move(parameters)),
@@ -93,32 +108,42 @@ struct CompareMacroDefinition {
   }
 };
 
-class IdentStrLexer {
-  IBaseScanner& scanner;
+std::string parseIdentifier(IBaseScanner& scanner);
+bool isStartOfIdentifier(int ch);
 
- public:
-  IdentStrLexer(IBaseScanner& scanner) : scanner(scanner){};
-  std::string scan();
-
-  static bool isStartOfAIdentifier(const char ch);
+struct ICopyable {
+  virtual ICopyable* copy() const = 0;
 };
 
-class PPBaseScanner : public IBaseScanner {
+template <std::derived_from<ICopyable> T>
+std::unique_ptr<T> copyUnique(const T& origin) {
+  T* copy = origin.copy();
+  return std::unique_ptr<T>(copy);
+}
+
+struct ICopyableOffsetScanner : IBaseScanner, ICopyable {
+  virtual void setOffset(CodeBuffer::Offset offset) = 0;
+  virtual CodeBuffer::Offset offset() const = 0;
+  virtual ICopyableOffsetScanner* copy() const = 0;
+};
+
+class PPBaseScanner : public ICopyableOffsetScanner {
  protected:
   CodeBuffer& _codeBuffer;
   CodeBuffer::Offset _offset;
-  std::function<std::tuple<int, int>(const unsigned char*)> readUTF32;
+  std::function<std::tuple<int, int>(const unsigned char*)> _readUTF32;
 
  public:
-  PPBaseScanner(CodeBuffer& codeBuffer, CodeBuffer::Offset startOffset,
-            std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+  PPBaseScanner(
+      CodeBuffer& codeBuffer, CodeBuffer::Offset startOffset,
+      std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
       : _codeBuffer(codeBuffer),
         _offset(startOffset),
-        readUTF32(std::move(readUTF32)) {}
+        _readUTF32(std::move(readUTF32)) {}
 
   int get() override {
     if (reachedEndOfInput()) return EOF;
-    const auto [codepoint, codelen] = readUTF32(_codeBuffer.pos(_offset));
+    const auto [codepoint, codelen] = _readUTF32(_codeBuffer.pos(_offset));
     _offset += codelen;
     skipBackslashReturn();
     return codepoint;
@@ -127,7 +152,7 @@ class PPBaseScanner : public IBaseScanner {
   int peek() const override {
     // TODO collapses comments and spaces into one.
     if (reachedEndOfInput()) return EOF;
-    const auto [codepoint, _] = readUTF32(_codeBuffer.pos(_offset));
+    const auto [codepoint, _] = _readUTF32(_codeBuffer.pos(_offset));
     return codepoint;
   }
 
@@ -137,7 +162,9 @@ class PPBaseScanner : public IBaseScanner {
   CodeBuffer& codeBuffer() { return _codeBuffer; }
   const CodeBuffer& codeBuffer() const { return _codeBuffer; }
 
-  virtual std::unique_ptr<PPBaseScanner> copy() const = 0;
+  std::function<std::tuple<int, int>(const unsigned char*)>& byteDecoder() {
+    return _readUTF32;
+  }
 
  protected:
   void skipBackslashReturn();
@@ -147,15 +174,15 @@ class PPScanner : public PPBaseScanner {
   PPImpl& pp;
 
  public:
-  PPScanner(PPImpl& pp, CodeBuffer& codeBuffer,
-            std::function<std::tuple<int, int>(const unsigned char*)> readUTF32);
+  PPScanner(
+      PPImpl& pp, CodeBuffer& codeBuffer,
+      std::function<std::tuple<int, int>(const unsigned char*)> readUTF32);
 
   bool reachedEndOfInput() const override;
   PPImpl& ppImpl() { return pp; }
   const PPImpl& ppImpl() const { return pp; }
-  std::unique_ptr<PPBaseScanner> copy() const {
-    return std::make_unique<PPScanner>(*this);
-  }
+
+  PPScanner* copy() const { return new PPScanner(*this); }
 };
 
 class PPDirectiveScanner : public PPBaseScanner {
@@ -164,10 +191,46 @@ class PPDirectiveScanner : public PPBaseScanner {
  public:
   PPDirectiveScanner(const PPScanner& scanner);
   bool reachedEndOfInput() const override;
+  PPDirectiveScanner* copy() const { return new PPDirectiveScanner(*this); }
+};
 
-  std::unique_ptr<PPBaseScanner> copy() const {
-    return std::make_unique<PPDirectiveScanner>(*this);
+class RawBufferScanner : public ICopyableOffsetScanner {
+  const char* const _buffer;
+  const std::size_t _bufferSize;
+  std::function<std::tuple<int, int>(const unsigned char*)> _readUTF32;
+
+  const char* _cursor;
+
+ public:
+  RawBufferScanner(
+      const char* buffer, std::size_t bufferSize,
+      std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+      : _buffer(buffer),
+        _bufferSize(bufferSize),
+        _readUTF32(readUTF32),
+        _cursor(buffer){};
+
+  int get() override {
+    if (reachedEndOfInput()) return EOF;
+    const auto [codepoint, charlen] =
+        _readUTF32(reinterpret_cast<const unsigned char*>(_cursor));
+    _cursor += charlen;
+    return codepoint;
   }
+  int peek() const override {
+    if (reachedEndOfInput()) return EOF;
+    const auto [codepoint, charlen] =
+        _readUTF32(reinterpret_cast<const unsigned char*>(_cursor));
+    return codepoint;
+  }
+
+  bool reachedEndOfInput() const override {
+    return _cursor == _buffer + _bufferSize;
+  }
+  CodeBuffer::Offset offset() const { return _cursor - _buffer; }
+  void setOffset(CodeBuffer::Offset offset) { _cursor = _buffer + offset; }
+
+  RawBufferScanner* copy() const { return new RawBufferScanner(*this); }
 };
 
 class PPImpl : public IBaseScanner {
@@ -183,9 +246,9 @@ class PPImpl : public IBaseScanner {
   std::vector<CodeBuffer::SectionID> stackOfSectionID;
   std::vector<CodeBuffer::Offset> stackOfStoredOffsets;
 
-  std::unique_ptr<PPScanner> identScanner;
+  std::optional<CodeBuffer::Offset> identOffset;
   PPScanner scanner;
-  
+
   bool canParseDirectives;
 
   friend class PPDirectiveScanner;
@@ -219,11 +282,14 @@ class PPImpl : public IBaseScanner {
 
  private:
   bool reachedEndOfCurrentSection() const;
-  template <typename T>
-  bool isSpace(const PPBaseScanner& scanner, T&& isSpaceFn) {
+  template <std::derived_from<IBaseScanner> V, typename T>
+  bool isSpace(const V& scanner, T&& isSpaceFn) {
     return isSpaceFn(scanner.peek());
   }
-  bool isSpace(const PPBaseScanner& scanner) { return isSpace(scanner, ::isSpace); }
+  template <std::derived_from<IBaseScanner> V>
+  bool isSpace(const V& scanner) {
+    return isSpace(scanner, ::isSpace);
+  }
 
   template <typename T>
   void skipSpacesAndComments(PPBaseScanner& scanner, T&& isSpaceFn);
@@ -235,7 +301,9 @@ class PPImpl : public IBaseScanner {
   void skipNewline(PPBaseScanner& scanner);
   template <typename T>
   void skipSpaces(PPBaseScanner& scanner, T&& isSpace);
-  void skipSpaces(PPBaseScanner& scanner) { return skipSpaces(scanner, ::isSpace); }
+  void skipSpaces(PPBaseScanner& scanner) {
+    return skipSpaces(scanner, ::isSpace);
+  }
   void enterSection(CodeBuffer::SectionID id);
   void exitSection();
   CodeBuffer::SectionID currentSectionID() const;
@@ -243,6 +311,24 @@ class PPImpl : public IBaseScanner {
   CodeBuffer::Offset currentSectionEnd() const;
   bool lookaheadMatches(const PPBaseScanner& scanner, const std::string& s);
   void exitFullyScannedSections();
+  std::variant<std::vector<std::string>, ErrorMessage>
+  parseFunctionLikeMacroParameters(PPBaseScanner& scanner);
+  std::tuple<std::optional<CodeBuffer::SectionID>, CodeBuffer::Offset>
+  tryExpandingMacro(const ICopyableOffsetScanner& scanner,
+                    const MacroDefinition* const macroDefContext,
+                    const std::vector<std::string>* const argContext);
+  std::vector<std::string> parseFunctionLikeMacroArgumentList(
+      ICopyableOffsetScanner& scanner,
+      const MacroDefinition* const macroDefContext,
+      const std::vector<std::string>* const argContext);
+  std::string parseFunctionLikeMacroArgument(
+      ICopyableOffsetScanner& scanner,
+      const MacroDefinition* const macroDefContext,
+      const std::vector<std::string>* const argContext);
+
+  std::string expandFunctionLikeMacro(
+      const MacroDefinition& macroDef,
+      const std::vector<std::string>& arguments);
 };
 
 template <typename T>
@@ -301,8 +387,9 @@ class Preprocessor : IBaseScanner {
   PPImpl ppImpl;
 
  public:
-  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut,
-               std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+  Preprocessor(
+      CodeBuffer& codeBuffer, IReportError& errOut,
+      std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
       : codeBuffer(codeBuffer),
         errOut(errOut),
         readUTF32(std::move(readUTF32)),
