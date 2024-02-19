@@ -102,42 +102,6 @@ bool isFirstCharOfIdentifier(const char ch) {
 
 /* PPImpl */
 
-/*
- * Problem:
- *
- * If a macro is expanded to an empty string, and it's at the end of the input,
- * for example:
- *
- * ```
- * #define ID(x) x
- *
- * hello ID()
- * ```
- *
- * the preprocessor has reached the end before we expand the macro, yet it
- * cannot know such fact until is actually expand the macro and find out if the
- * macro is expanded to nothing. For now `reachedEndOfInput` checks the internal
- * scanner's offset to determine if it has reached the end. It doesn't changes
- * or copy it scanner. Without doing that, It is not possible for it to know if
- * the pp has reached the end.
- *
- * Solution:
- *
- * Implement the peek() method. Inside the method it will copy the current
- * scanner and try getting the next character. if the pp has reached the end, it
- * will return EOF. Internally we all uses `peek() == EOF` to check if we've
- * reached the end, and `reachedTheEndOfInput` is only used by the user of a
- * preprocessor.
- *
- * Then, the reachedTheEndOfInput will only be a simple function that checks if
- * current `peek()` equals to `EOF`:
- *
- * bool reachedEndOfInput() {
- *     return peek() == EOF;
- * }
- *
- *
- */
 PPCharacter PPImpl::get() {
   if (stackOfSectionID.empty() && scanner.reachedEndOfInput()) {
     return PPCharacter::eof();
@@ -202,44 +166,8 @@ PPCharacter PPImpl::get() {
   exitFullyScannedSections();
   return PPCharacter(ch, offset);
 }
-/*
-identifier <- parse the identifier first
 
-1. expand it as object-like macro if there is an object-like macro definition
-whose name is same as the identifier.
 
-2. expand it as function-like macro if there is a funciton-like macro defintion
-whose name is same as the identifier, and there is a argument list right
-behind the identifier
-
-3. otherwise do not expand the macro.
-identScanner = copy current scanner
-identifier = parseIdentifier(identScanner)
-
-macro definition := find macro definition with identifier
-
-if macro definition isn't found {
-scan the text char by char.
-}
-
-if the macro definition is a object-like macro {
-expand it.
-}
-
-if the macro definition is a function-like macro {
-if it is followed by an argument list {
-     arguments = parseMacroArgs scanner.
-     expand the macro (if it's cached, return the cached string directly)
-     enter and scan the new section.
-} else {
-    scan the text char by cahr.
-}
-}
-
-func parseMacroArgs (scanner) {
-skip '(' at the beginning,
-}
-*/
 std::tuple<std::optional<CodeBuffer::SectionID>, CodeBuffer::Offset>
 PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
                           const MacroDefinition* const macroDefContext,
