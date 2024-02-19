@@ -138,23 +138,33 @@ bool isFirstCharOfIdentifier(const char ch) {
  *
  *
  */
-int PPImpl::get() {
-  if (reachedEndOfInput()) {
-    return EOF;
+PPCharacter PPImpl::get() {
+  if (stackOfSectionID.empty() && scanner.reachedEndOfInput()) {
+    return PPCharacter::eof();
   }
   if (scanner.reachedEndOfInput()) {
     exitSection();
     return get();
   }
-  if (identOffset) {
+
+  if (identEndOffset) {
     const auto ch = scanner.get();
-    if (scanner.offset() == identOffset) {
-      identOffset = std::nullopt;
+    const auto offset = scanner.offset();
+    if (offset == identEndOffset) {
+      identEndOffset = std::nullopt;
       exitFullyScannedSections();
     }
-    return ch;
+    return PPCharacter(ch, offset);
   }
+
+  // A row of spaces and comments will be merge into one space. That means
+  // whenever we read a space or a comment, we will skip as far as possible then
+  // return a space to the caller.
   if (isSpace(scanner) || lookaheadMatches(scanner, "/*")) {
+    // Actually an error range will not start or end with a space or a comment,
+    // so it doesn't matter what offset we return to the caller.
+
+    const auto offset = scanner.offset();
     skipSpacesAndComments(scanner);
 
     if (scanner.peek() == '#' && canParseDirectives) {
@@ -162,7 +172,7 @@ int PPImpl::get() {
       return get();
     } else {
       exitFullyScannedSections();
-      return ' ';
+      return PPCharacter(' ', offset);
     }
   }
   if (scanner.peek() == '#' && canParseDirectives) {
@@ -170,6 +180,10 @@ int PPImpl::get() {
     return get();
   }
 
+  // A directive can be only written at the starting of a line, optionally
+  // preceeded by spaces and comments, so if we find a character that is not
+  // space nor a start of a comment, we cannot parse directives any longer
+  // until reaching the next line.
   canParseDirectives = false;
 
   if (isStartOfIdentifier(scanner.peek())) {
@@ -178,22 +192,16 @@ int PPImpl::get() {
       scanner.setOffset(endOffset);
       enterSection(*sectionID);
     } else {
-      identOffset = endOffset;
+      identEndOffset = endOffset;
     }
     return get();
   }
 
   const auto ch = scanner.get();
+  const auto offset = scanner.offset();
   exitFullyScannedSections();
-  return ch;
+  return PPCharacter(ch, offset);
 }
-
-int PPImpl::peek() const { return 0; }
-
-bool PPImpl::reachedEndOfInput() const {
-  return stackOfSectionID.empty() && ppReachedEnd(scanner.offset());
-}
-
 /*
 identifier <- parse the identifier first
 
@@ -232,7 +240,6 @@ func parseMacroArgs (scanner) {
 skip '(' at the beginning,
 }
 */
-
 std::tuple<std::optional<CodeBuffer::SectionID>, CodeBuffer::Offset>
 PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
                           const MacroDefinition* const macroDefContext,
@@ -269,7 +276,7 @@ PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
   if (macroDef->type == MacroType::FUNCTION_LIKE_MACRO) {
     expandedText = expandFunctionLikeMacro(*macroDef, arguments);
   } else {
-    expandedText = macroDef->body;
+    expandedText = macroDef->body.empty() ? " " : macroDef->body;
   }
 
   CodeBuffer::SectionID sectionID = codeBuffer.addSection(expandedText);

@@ -170,6 +170,23 @@ class PPBaseScanner : public ICopyableOffsetScanner {
   void skipBackslashReturn();
 };
 
+// A wrapper that store a character and all information about it.
+class PPCharacter {
+  friend class PPImpl;
+  int _codepoint;
+  CodeBuffer::Offset _offset;
+
+ private:
+  PPCharacter(int codepoint, CodeBuffer::Offset offset)
+      : _codepoint(codepoint), _offset(offset) {}
+
+ public:
+  operator int() const { return _codepoint; }
+  int offset() const { return _offset; }
+
+  static PPCharacter eof() { return PPCharacter(EOF, 0); }
+};
+
 class PPScanner : public PPBaseScanner {
   PPImpl& pp;
 
@@ -233,21 +250,21 @@ class RawBufferScanner : public ICopyableOffsetScanner {
   RawBufferScanner* copy() const { return new RawBufferScanner(*this); }
 };
 
-class PPImpl : public IBaseScanner {
+class PPImpl {
   CodeBuffer& codeBuffer;
   IReportError& errOut;
-  std::set<MacroDefinition, CompareMacroDefinition>& setOfMacroDefinitions;
-  const std::vector<std::unique_ptr<std::string>>* macroArguments;
-  std::map<std::string, CodeBuffer::SectionID>& codeCache;
 
-  std::function<bool(CodeBuffer::Offset)> ppReachedEnd;
-  std::function<bool(CodeBuffer::Offset)> doesScannerReachedEnd;
+  // A cache for macro that has been expanded before.
+  std::map<std::string, CodeBuffer::SectionID> codeCache;
+  std::set<MacroDefinition, CompareMacroDefinition> setOfMacroDefinitions;
 
   std::vector<CodeBuffer::SectionID> stackOfSectionID;
   std::vector<CodeBuffer::Offset> stackOfStoredOffsets;
 
-  std::optional<CodeBuffer::Offset> identOffset;
+  std::optional<CodeBuffer::Offset> identEndOffset;
   PPScanner scanner;
+
+  std::optional<PPCharacter> lookaheadBuffer;
 
   bool canParseDirectives;
 
@@ -255,30 +272,19 @@ class PPImpl : public IBaseScanner {
   friend class PPScanner;
 
  public:
-  PPImpl(
-      CodeBuffer& codeBuffer, IReportError& errOut,
-      std::set<MacroDefinition, CompareMacroDefinition>& setOfMacroDefinitions,
-      const std::vector<std::unique_ptr<std::string>>* macroArguments,
-      std::map<std::string, CodeBuffer::SectionID>& codeCache,
-      CodeBuffer::Offset startOffset,
-      std::function<bool(CodeBuffer::Offset)>& ppReachedEnd,
-      std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+  PPImpl(CodeBuffer& codeBuffer, IReportError& errOut,
+         std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
       : codeBuffer(codeBuffer),
         errOut(errOut),
         setOfMacroDefinitions(setOfMacroDefinitions),
-        macroArguments(macroArguments),
         codeCache(codeCache),
-        ppReachedEnd(ppReachedEnd),
-        doesScannerReachedEnd([this](CodeBuffer::Offset offset) {
-          return this->ppReachedEnd(offset) || offset == currentSectionEnd();
-        }),
         scanner(*this, codeBuffer, readUTF32) {
     fastForwardToFirstOutputCharacter(scanner);
   }
 
-  int get() override;
-  int peek() const override;
-  bool reachedEndOfInput() const override;
+  PPCharacter get();
+  PPCharacter peek() const;
+  bool reachedEndOfInput() const;
 
  private:
   bool reachedEndOfCurrentSection() const;
@@ -374,38 +380,39 @@ void PPImpl::skipSpaces(PPBaseScanner& scanner, T&& isSpaceFn) {
   }
 }
 
-class Preprocessor : IBaseScanner {
-  CodeBuffer& codeBuffer;
-  IReportError& errOut;
-  std::function<std::tuple<int, int>(const unsigned char*)> readUTF32;
-  std::function<bool(CodeBuffer::Offset)> toEndOfFirstSection;
-
-  // A cache for macro that has been expanded before.
-  std::map<std::string, CodeBuffer::SectionID> codeCache;
-  std::set<MacroDefinition, CompareMacroDefinition> setOfMacroDefinitions;
-
-  PPImpl ppImpl;
+class Preprocessor {
+  mutable PPImpl ppImpl;
+  mutable std::optional<PPCharacter> lookaheadBuffer;
 
  public:
   Preprocessor(
       CodeBuffer& codeBuffer, IReportError& errOut,
       std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
-      : codeBuffer(codeBuffer),
-        errOut(errOut),
-        readUTF32(std::move(readUTF32)),
-        toEndOfFirstSection([this](CodeBuffer::Offset offset) {
-          return offset == this->codeBuffer.sectionEnd(0);
-        }),
-        ppImpl(codeBuffer, errOut, setOfMacroDefinitions, nullptr, codeCache,
-               codeBuffer.section(0), toEndOfFirstSection, this->readUTF32) {}
+      : ppImpl(codeBuffer, errOut, std::move(readUTF32)) {}
 
   Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut)
       : Preprocessor(codeBuffer, errOut, utf8) {}
 
-  // Inherited via IScanner
-  int get() override { return ppImpl.get(); }
-  int peek() const override { return ppImpl.peek(); }
-  bool reachedEndOfInput() const override { return ppImpl.reachedEndOfInput(); }
+  PPCharacter get() {
+    if (lookaheadBuffer) {
+      const auto copy = *lookaheadBuffer;
+      lookaheadBuffer = std::nullopt;
+      return copy;
+    } else {
+      return ppImpl.get();
+    }
+  }
+
+  PPCharacter peek() const {
+    if (lookaheadBuffer) return *lookaheadBuffer;
+    auto ppCh = ppImpl.get();
+    if (ppCh != EOF) {
+      lookaheadBuffer = ppCh;
+    }
+    return ppCh;
+  }
+
+  bool reachedEndOfInput() const { return peek() == EOF; }
 };
 
 void skipAll(PPBaseScanner& scanner);

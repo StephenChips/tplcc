@@ -53,8 +53,14 @@ TEST_F(TestPreprocessor, define_object_macro) {
 
   // Expect it can discern macro name among characters
   EXPECT_EQ(scanInput("#define FOO 1\n"
-                      "a=FOO;\n"),
+                      "a=FOO;\n\n\n\n\n\n"),
+            //               ^
+            //               Remember sequence of spaces characters will be
+            //               merged into one ' ' (0u0020) and \n is a space
+            //               character.
             "a=1; ");
+  //             ^
+  //             That's why there is a space at the end of the output.
 
   // Expect it can handle nested expansion and non-macro identifier
   // whose substring is one of the macro's name.
@@ -66,6 +72,11 @@ TEST_F(TestPreprocessor, define_object_macro) {
 
   // define but doesn't use it
   EXPECT_EQ(scanInput("#define FOO 10 "), "");
+
+  // A macro with empty body will be expanded to a space.
+  EXPECT_EQ(scanInput("#define EMPTY\n"
+                      "EMPTY;"),
+            " ;");
 }
 
 TEST_F(TestPreprocessor, every_comment_will_become_a_space) {
@@ -106,14 +117,6 @@ TEST_F(TestPreprocessor, empty_directive_line) {
   EXPECT_EQ(scanInput(s), "int a = 10;");
 }
 
-TEST_F(TestPreprocessor, define_object_with_empty_body) {
-  const auto s =
-      "# define FOO\n"
-      "FOO;";
-
-  EXPECT_EQ(scanInput(s), ";");
-}
-
 TEST_F(TestPreprocessor, define_directive_in_a_string) {
   const auto s = "\"#define FOO 1\"";
   EXPECT_EQ(scanInput(s), s);
@@ -148,6 +151,11 @@ TEST_F(TestPreprocessor, define_function_macro) {
   /* The simplest situation */
   EXPECT_EQ(scanInput(macroDIV + "DIV(4, 3)"), "((4) / (3))");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  /* A function-like macro that has no body will be expanded as one space. */
+  EXPECT_EQ(scanInput("#define EMPTY()\n"
+                      "EMPTY()"),
+            " ");
 
   /* Multiple pp-tokens in an argument */
   EXPECT_EQ(scanInput(macroDIV + "DIV(1 + 2+ !foo.bar, 3)"),
@@ -186,7 +194,8 @@ TEST_F(TestPreprocessor, define_function_macro) {
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
   const std::string macroEXPAND = "#define EXPAND(x) x";
-  EXPECT_EQ(scanInput(macroDIV + macroEMPTY + macroDEFER + macroEXPAND + "EXPAND(DEFER(DIV)(3, 4))"),
+  EXPECT_EQ(scanInput(macroDIV + macroEMPTY + macroDEFER + macroEXPAND +
+                      "EXPAND(DEFER(DIV)(3, 4))"),
             "((3) / (4))");
 
   EXPECT_EQ(scanInput(macroID + "ID()"), "");
