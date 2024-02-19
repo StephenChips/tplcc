@@ -250,6 +250,17 @@ class RawBufferScanner : public ICopyableOffsetScanner {
   RawBufferScanner* copy() const { return new RawBufferScanner(*this); }
 };
 
+namespace MacroExpansionResult {
+struct Ok {
+  CodeBuffer::SectionID sectionID;
+  CodeBuffer::Offset endOffset;
+};
+struct Fail {};
+
+using Type =
+    std::variant<MacroExpansionResult::Ok, MacroExpansionResult::Fail, Error>;
+};  // namespace MacroExpansionResult
+
 class PPImpl {
   CodeBuffer& codeBuffer;
   IReportError& errOut;
@@ -319,10 +330,10 @@ class PPImpl {
   void exitFullyScannedSections();
   std::variant<std::vector<std::string>, ErrorMessage>
   parseFunctionLikeMacroParameters(PPBaseScanner& scanner);
-  std::tuple<std::optional<CodeBuffer::SectionID>, CodeBuffer::Offset>
-  tryExpandingMacro(const ICopyableOffsetScanner& scanner,
-                    const MacroDefinition* const macroDefContext,
-                    const std::vector<std::string>* const argContext);
+  std::tuple<MacroExpansionResult::Type, CodeBuffer::Offset> tryExpandingMacro(
+      const ICopyableOffsetScanner& scanner,
+      const MacroDefinition* const macroDefContext,
+      const std::vector<std::string>* const argContext);
   std::vector<std::string> parseFunctionLikeMacroArgumentList(
       ICopyableOffsetScanner& scanner,
       const MacroDefinition* const macroDefContext,

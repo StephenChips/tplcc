@@ -7,6 +7,8 @@
 #include <format>
 #include <stdexcept>
 
+#include "helper.h"
+
 std::optional<std::size_t> findIndexOfParameter(
     const MacroDefinition& macroDef, const std::string& parameterName) {
   const auto& parameters = macroDef.parameters;
@@ -151,13 +153,18 @@ PPCharacter PPImpl::get() {
   canParseDirectives = false;
 
   if (isStartOfIdentifier(scanner.peek())) {
-    auto [sectionID, endOffset] = tryExpandingMacro(scanner, nullptr, nullptr);
-    if (sectionID) {
-      scanner.setOffset(endOffset);
-      enterSection(*sectionID);
+    auto [res, endOffset] = tryExpandingMacro(scanner, nullptr, nullptr);
+
+    if (const auto ptr = std::get_if<MacroExpansionResult::Ok>(&res)) {
+      scanner.setOffset(ptr->endOffset);
+      enterSection(ptr->sectionID);
+    } else if (const auto ptr = std::get_if<MacroExpansionResult::Fail>(&res)) {
+      identEndOffset = endOffset;
     } else {
       identEndOffset = endOffset;
+      errOut.reportsError(std::get<Error>(std::move(res)));
     }
+
     return get();
   }
 
@@ -167,8 +174,7 @@ PPCharacter PPImpl::get() {
   return PPCharacter(ch, offset);
 }
 
-
-std::tuple<std::optional<CodeBuffer::SectionID>, CodeBuffer::Offset>
+std::tuple<MacroExpansionResult::Type, CodeBuffer::Offset>
 PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
                           const MacroDefinition* const macroDefContext,
                           const std::vector<std::string>* const argContext) {
@@ -177,13 +183,14 @@ PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
              macroDefContext->parameters.size() == argContext->size());
 
   auto copy = copyUnique(scanner);
+  const auto startOffset = copy->offset();
   std::string identStr = parseIdentifier(*copy);
 
   const auto macroDef = setOfMacroDefinitions.find(identStr);
   if (macroDef == setOfMacroDefinitions.end() ||
       macroDef->type == MacroType::FUNCTION_LIKE_MACRO &&
           !copy->reachedEndOfInput() && copy->peek() != '(') {
-    return {std::nullopt, copy->offset()};
+    return {MacroExpansionResult::Fail(), copy->offset()};
   }
 
   std::string key;
@@ -191,13 +198,31 @@ PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
   if (macroDef->type == MacroType::FUNCTION_LIKE_MACRO) {
     arguments =
         parseFunctionLikeMacroArgumentList(*copy, macroDefContext, argContext);
+
+    // If there is nothing inside an argument list, e.g. ID(), the
+    // macro will still have a empty string as its only argument.
+    if (macroDef->parameters.size() == 1 && arguments.empty()) {
+      arguments.push_back("");
+    }
+
+    if (macroDef->parameters.size() != arguments.size()) {
+      return {
+          Error{{startOffset, copy->offset()},
+                std::format("The macro \"{}\" requires {} argument(s), but got {}.",
+                            macroDef->name, macroDef->parameters.size(),
+                            arguments.size()),
+                ""},
+          copy->offset()};
+    }
+
     key = createFunctionLikeMacroCacheKey(macroDef->name, arguments);
   } else {
     key = macroDef->name;
   }
 
   if (const auto iter = codeCache.find(key); iter != codeCache.end()) {
-    return {iter->second, copy->offset()};
+    return {MacroExpansionResult::Ok{iter->second, copy->offset()},
+            copy->offset()};
   }
 
   std::string expandedText;
@@ -210,7 +235,7 @@ PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
   CodeBuffer::SectionID sectionID = codeBuffer.addSection(expandedText);
   codeCache.insert({macroDef->name, sectionID});
 
-  return {sectionID, copy->offset()};
+  return {MacroExpansionResult::Ok{sectionID, copy->offset()}, copy->offset()};
 }
 
 std::vector<std::string> PPImpl::parseFunctionLikeMacroArgumentList(
@@ -223,10 +248,6 @@ std::vector<std::string> PPImpl::parseFunctionLikeMacroArgumentList(
 
   if (scanner.peek() == ')') {
     scanner.get();  // skip the ending ')'
-
-    // If there is nothing inside an argument list, e.g. ID(), the
-    // macro will still have a empty string as its only argument.
-    argumentList.push_back("");
     return argumentList;
   }
 
@@ -253,11 +274,9 @@ std::vector<std::string> PPImpl::parseFunctionLikeMacroArgumentList(
 std::string PPImpl::expandFunctionLikeMacro(
     const MacroDefinition& macroDef,
     const std::vector<std::string>& arguments) {
-  if (macroDef.parameters.size() != arguments.size()) {
-    throw std::runtime_error(std::format(
-        "The macro {} requires {} argument(s), but got {}.", macroDef.name,
-        macroDef.parameters.size(), arguments.size()));
-  }
+  using namespace MacroExpansionResult;
+
+  if (macroDef.body.empty()) return " ";
 
   RawBufferScanner rbs(macroDef.body.c_str(), macroDef.body.size(),
                        scanner.byteDecoder());
@@ -272,23 +291,25 @@ std::string PPImpl::expandFunctionLikeMacro(
         continue;
       }
 
-      const auto [sectionID, endOffset] =
-          tryExpandingMacro(rbs, &macroDef, &arguments);
+      auto [res, endOffset] = tryExpandingMacro(rbs, &macroDef, &arguments);
       CodeBuffer::Offset startOffset;
       std::size_t size;
 
-      if (sectionID) {
-        startOffset = codeBuffer.section(*sectionID);
-        size = codeBuffer.sectionSize(*sectionID);
-      } else {
+      if (const auto ptr = std::get_if<Ok>(&res)) {
+        startOffset = codeBuffer.section(ptr->sectionID);
+        size = codeBuffer.sectionSize(ptr->sectionID);
+        rbs.setOffset(ptr->endOffset);
+      } else if (const auto ptr = std::get_if<Fail>(&res)) {
         startOffset = rbs.offset();
         size = endOffset - rbs.offset();
+        rbs.setOffset(endOffset);
+      } else {
+        errOut.reportsError(std::get<Error>(std::move(res)));
+        continue;
       }
 
       const auto startPos = codeBuffer.pos(startOffset);
       output.append(reinterpret_cast<const char*>(startPos), size);
-
-      rbs.setOffset(endOffset);
     } else {
       output += rbs.get();
     }
@@ -301,6 +322,8 @@ std::string PPImpl::parseFunctionLikeMacroArgument(
     ICopyableOffsetScanner& scanner,
     const MacroDefinition* const macroDefContext,
     const std::vector<std::string>* const argContext) {
+  using namespace MacroExpansionResult;
+
   std::string output;
   int parenthesisLevel = 0;
 
@@ -337,22 +360,25 @@ std::string PPImpl::parseFunctionLikeMacroArgument(
         }
       }
 
-      const auto [sectionID, endOffset] =
-          tryExpandingMacro(scanner, macroDefContext, argContext);
+      auto [res, endOffset] = tryExpandingMacro(scanner, macroDefContext, argContext);
       CodeBuffer::Offset startOffset;
       std::size_t size;
-      if (sectionID) {
-        startOffset = codeBuffer.section(*sectionID);
-        size = codeBuffer.sectionSize(*sectionID);
-      } else {
+
+      if (const auto ptr = std::get_if<Ok>(&res)) {
+        startOffset = codeBuffer.section(ptr->sectionID);
+        size = codeBuffer.sectionSize(ptr->sectionID);
+        scanner.setOffset(ptr->endOffset);
+      } else if (const auto ptr = std::get_if<Fail>(&res)) {
         startOffset = scanner.offset();
         size = endOffset - scanner.offset();
+        scanner.setOffset(endOffset);
+      } else {
+        errOut.reportsError(std::get<Error>(std::move(res)));
+        continue;
       }
 
       const auto startPos = codeBuffer.pos(startOffset);
       output.append(reinterpret_cast<const char*>(startPos), size);
-
-      scanner.setOffset(endOffset);
     } else {
       output += scanner.get();
     }

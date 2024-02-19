@@ -9,7 +9,7 @@ add_executable (tplcc
 	"preprocessor.cpp"
 	"code-buffer.cpp"
 	"encoding.cpp"
-)
+ "helper.h")
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET tplcc PROPERTY CXX_STANDARD 20)

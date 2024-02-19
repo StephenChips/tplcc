@@ -210,11 +210,14 @@ TEST_F(TestPreprocessor, define_function_macro) {
 
   /* Invalid cases */
 
-  EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID)"), "");
+  // If an function-like macro call is invalid, for example, the number of 
+  // arguments isn't equal to the number of parameter, the whole expression
+  // will not be expanded and output the invalid expression instead.
+  EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID)"), "MCALL(ID)");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
-              "macro \"MCALL\" requires 2 arguments, but only 1 given");
+              "The macro \"MCALL\" requires 2 argument(s), but got 1.");
   }
 
   scanInput("#define F(a, a) a");
