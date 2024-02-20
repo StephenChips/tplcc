@@ -232,7 +232,14 @@ TEST_F(TestPreprocessor, define_function_macro) {
   // will not be expanded and output the invalid expression instead.
 
   EXPECT_EQ(scanInput(macroDIV + "DIV(a) DIV(a,b,c)"), "DIV(a) DIV(a,b,c)");
-  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  EXPECT_EQ(errOut->listOfErrors.size(), 2);
+  if (errOut->listOfErrors.size() == 2) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "The macro \"DIV\" requires 2 argument(s), but got 1.");
+    EXPECT_EQ(errOut->listOfErrors[1].errorMessage(),
+              "The macro \"DIV\" requires 2 argument(s), but got 3.");
+  }
+
   if (errOut->listOfErrors.size() == 1) {
     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
               "The macro \"MCALL\" requires 2 argument(s), but got 1.");
