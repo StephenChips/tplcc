@@ -357,10 +357,11 @@ std::string PPImpl::parseFunctionLikeMacroArgument(
       if (scanner.peek() == ')') break;
     }
 
-    if (scanner.peek() == ')') {
-      parenthesisLevel--;
-    } else if (scanner.peek() == '(') {
-      parenthesisLevel++;
+    if (scanner.peek() == '(' || scanner.peek() == ')') {
+      if (scanner.peek() == '(') parenthesisLevel++;
+      if (scanner.peek() == ')') parenthesisLevel--;
+      output += scanner.get();
+      continue;
     }
 
     if (isSpace(scanner)) {
@@ -588,18 +589,53 @@ PPImpl::parseFunctionLikeMacroParameters(const std::string& macroName,
     return parameters;
   }
 
+  if (scanner.reachedEndOfInput()) {
+    return Error{{scanner.offset(), scanner.offset() + 1},
+                 "Expected parameter name before end of line",
+                 ""};
+  }
+
+  if (!isStartOfIdentifier(scanner.peek())) {
+    const auto startOffset = scanner.offset();
+    scanner.get();
+    const auto endOffset = scanner.offset();
+    return Error{{startOffset, endOffset}, "Expected ',' or ')' here.", ""};
+  }
+
   const auto identStartOffset = scanner.offset();
   parameters.push_back(parseIdentifier(scanner));
+  skipSpacesAndComments(scanner);
 
-  while (!scanner.reachedEndOfInput() && scanner.peek() != ')') {
+  while (scanner.peek() != ')') {
+    if (scanner.reachedEndOfInput()) {
+      return Error{{scanner.offset(), scanner.offset() + 1},
+                   "Expected ')' before end of line",
+                   ""};
+    }
+
     if (scanner.peek() != ',') {
       const auto startOffset = scanner.offset();
       scanner.get();
       const auto endOffset = scanner.offset();
       return Error{{startOffset, endOffset}, "Expected ',' or ')' here.", ""};
     }
+
     scanner.get();  // skip , (ignore error conditions for now)
     skipSpacesAndComments(scanner);
+
+    if (scanner.reachedEndOfInput()) {
+      return Error{{scanner.offset(), scanner.offset() + 1},
+                   "Expected parameter name before end of line",
+                   ""};
+    }
+
+    if (!isStartOfIdentifier(scanner.peek())) {
+      const auto startOffset = scanner.offset();
+      scanner.get();
+      const auto endOffset = scanner.offset();
+      return Error{{startOffset, endOffset}, "Expected ',' or ')' here.", ""};
+    }
+
     const auto parameter = parseIdentifier(scanner);
     if (parameterHasDefined(parameter)) {
       const auto identEndOffset = scanner.offset();

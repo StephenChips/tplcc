@@ -239,11 +239,13 @@ TEST_F(TestPreprocessor, define_function_macro) {
               "unterminated argument list invoking macro \"F\"");
   }
 
-  scanInput("#define F(a");
-  EXPECT_EQ(errOut->listOfErrors.size(), 1);
-  if (errOut->listOfErrors.size() == 1) {
+  scanInput("#define F(a\n""#define G(a $)\n");
+  EXPECT_EQ(errOut->listOfErrors.size(), 2);
+  if (errOut->listOfErrors.size() == 2) {
     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
-              "expected ')' before end of line");
+              "Expected ')' before end of line");
+    EXPECT_EQ(errOut->listOfErrors[1].errorMessage(),
+              "Expected ',' or ')' here.");
   }
 
   scanInput(
@@ -252,26 +254,26 @@ TEST_F(TestPreprocessor, define_function_macro) {
   EXPECT_EQ(errOut->listOfErrors.size(), 2);
   if (errOut->listOfErrors.size() == 2) {
     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
-              "expected parameter name before end of line");
+              "Expected parameter name before end of line");
     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
-              "expected parameter name before end of line");
+              "Expected parameter name before end of line");
   }
 
   scanInput("#define F(G()) G()");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
-              "expected ',' or ')', found \"(\"");
+              "Expected ',' or ')' here.");
   }
 
-  // scanInput(
-  //     "#define FOO(a, b, c) (a, b, c)\r\n"
-  //     "FOO(((, (), ()))");
-  // EXPECT_EQ(errOut->listOfErrors.size(), 1);
-  // if (errOut->listOfErrors.size() == 1) {
-  //   EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
-  //             "macro \"FOO\" requires 3 arguments, but only 1 given");
-  // }
+   scanInput(
+       "#define FOO(a, b, c) (a, b, c)\r\n"
+       "FOO((, (), ()))");
+   EXPECT_EQ(errOut->listOfErrors.size(), 1);
+   if (errOut->listOfErrors.size() == 1) {
+     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+               "The macro \"FOO\" requires 3 argument(s), but got 1.");
+   }
 
   // TODO __VA_ARGS__
   // TODO: paint-blue
