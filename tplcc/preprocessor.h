@@ -110,6 +110,23 @@ std::unique_ptr<T> copyUnique(const T& origin) {
   return std::unique_ptr<T>(copy);
 }
 
+// A wrapper that store a character and all information about it.
+class PPCharacter {
+  friend class PPImpl;
+  int _codepoint;
+  CodeBuffer::Offset _offset;
+
+ private:
+  PPCharacter(int codepoint, CodeBuffer::Offset offset)
+      : _codepoint(codepoint), _offset(offset) {}
+
+ public:
+  operator int() const { return _codepoint; }
+  int offset() const { return _offset; }
+
+  static PPCharacter eof() { return PPCharacter(EOF, 0); }
+};
+
 struct ICopyableOffsetScanner : IBaseScanner, ICopyable {
   virtual void setOffset(CodeBuffer::Offset offset) = 0;
   virtual CodeBuffer::Offset offset() const = 0;
@@ -156,23 +173,6 @@ class PPBaseScanner : public ICopyableOffsetScanner {
 
  protected:
   void skipBackslashReturn();
-};
-
-// A wrapper that store a character and all information about it.
-class PPCharacter {
-  friend class PPImpl;
-  int _codepoint;
-  CodeBuffer::Offset _offset;
-
- private:
-  PPCharacter(int codepoint, CodeBuffer::Offset offset)
-      : _codepoint(codepoint), _offset(offset) {}
-
- public:
-  operator int() const { return _codepoint; }
-  int offset() const { return _offset; }
-
-  static PPCharacter eof() { return PPCharacter(EOF, 0); }
 };
 
 class PPScanner : public PPBaseScanner {
