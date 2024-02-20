@@ -17,6 +17,7 @@ class Error {
     std::tuple<std::uint32_t, std::uint32_t> range;
 
 public:
+    Error() = default;
     Error(std::tuple<CodeBuffer::Offset, CodeBuffer::Offset> range,
           std::string msg, std::string hintMsg = "")
         : range(range), msg(std::move(msg)), hintMsg(std::move(hintMsg)) {}

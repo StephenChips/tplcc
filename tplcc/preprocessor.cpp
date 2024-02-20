@@ -206,13 +206,13 @@ PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
     }
 
     if (macroDef->parameters.size() != arguments.size()) {
-      return {
-          Error{{startOffset, copy->offset()},
-                std::format("The macro \"{}\" requires {} argument(s), but got {}.",
-                            macroDef->name, macroDef->parameters.size(),
-                            arguments.size()),
-                ""},
-          copy->offset()};
+      return {Error{{startOffset, copy->offset()},
+                    std::format(
+                        "The macro \"{}\" requires {} argument(s), but got {}.",
+                        macroDef->name, macroDef->parameters.size(),
+                        arguments.size()),
+                    ""},
+              copy->offset()};
     }
 
     key = createFunctionLikeMacroCacheKey(macroDef->name, arguments);
@@ -360,7 +360,8 @@ std::string PPImpl::parseFunctionLikeMacroArgument(
         }
       }
 
-      auto [res, endOffset] = tryExpandingMacro(scanner, macroDefContext, argContext);
+      auto [res, endOffset] =
+          tryExpandingMacro(scanner, macroDefContext, argContext);
       CodeBuffer::Offset startOffset;
       std::size_t size;
 
@@ -402,21 +403,21 @@ void PPImpl::fastForwardToFirstOutputCharacter(PPBaseScanner& scanner) {
 }
 
 void PPImpl::parseDirective() {
-  using namespace std::literals::string_literals;
   PPDirectiveScanner ppds{scanner};
 
   const auto startOffset = currentSection();
-  std::string errorMsg;
-  std::string hint;
+  Error error;
 
   ppds.get();  // ignore the leading #
   skipSpaces(ppds, isDirectiveSpace);
 
   std::string directiveName;
 
+  const auto offsetBeforeDirectiveName = scanner.offset();
   while (!ppds.reachedEndOfInput() && !isDirectiveSpace(ppds.peek())) {
     directiveName.push_back(ppds.get());
   }
+  const auto offsetAfterDirectiveName = scanner.offset();
 
   if (directiveName == "") {
     scanner.setOffset(ppds.offset());
@@ -430,16 +431,19 @@ void PPImpl::parseDirective() {
 
     skipSpacesAndComments(ppds, isDirectiveSpace);
     if (!isStartOfIdentifier(ppds.peek())) {
-      errorMsg = hint = "macro names must be identifiers";
+      const auto startOffset = ppds.offset();
+      ppds.get();
+      const auto endOffset = ppds.offset();
+      error = Error({startOffset, endOffset}, "macro names must be identifiers",
+                    "");
       goto fail;
     }
 
     std::string macroName = parseIdentifier(ppds);
     if (ppds.peek() == '(') {
-      auto result = parseFunctionLikeMacroParameters(ppds);
-      if (auto msg = std::get_if<ErrorMessage>(&result)) {
-        errorMsg = std::move(msg->errorMessage);
-        hint = std::move(msg->hint);
+      auto result = parseFunctionLikeMacroParameters(macroName, ppds);
+      if (auto e = std::get_if<Error>(&result)) {
+        error = std::move(*e);
         goto fail;
       }
 
@@ -460,17 +464,19 @@ void PPImpl::parseDirective() {
     scanner.setOffset(ppds.offset());
     skipNewline(scanner);
   } else {
-    errorMsg = hint = "Unknown preprocessing directive "s + directiveName;
+    error = Error{{offsetBeforeDirectiveName, offsetAfterDirectiveName},
+                  "Unknown preprocessing directive " + directiveName,
+                  ""
+    };
     goto fail;
   }
 
   return;
 
 fail:
-  skipAll(scanner);
-  const CodeBuffer::Offset endOffset = scanner.offset();
-  const auto range = std::make_tuple(startOffset, endOffset);
-  const auto error = Error({startOffset, endOffset}, errorMsg, errorMsg);
+  skipAll(ppds);
+  scanner.setOffset(ppds.offset());
+  skipNewline(scanner);
   errOut.reportsError(error);
 }
 
@@ -544,11 +550,16 @@ void PPBaseScanner::skipBackslashReturn() {
 // restOfParameters -> ''
 //      |  , id restOfParameters
 //
-std::variant<std::vector<std::string>, ErrorMessage>
-PPImpl::parseFunctionLikeMacroParameters(PPBaseScanner& scanner) {
+std::variant<std::vector<std::string>, Error>
+PPImpl::parseFunctionLikeMacroParameters(const std::string& macroName,
+                                         PPBaseScanner& scanner) {
   std::vector<std::string> parameters;
+  const auto parameterHasDefined = [&parameters](
+                                           const std::string& identifier) {
+    return std::find(parameters.begin(), parameters.end(), identifier) != parameters.end();
+  };
 
-  scanner.get();
+  scanner.get(); // skip the beginning '('
   skipSpacesAndComments(scanner);
 
   if (scanner.peek() == ')') {
@@ -556,17 +567,27 @@ PPImpl::parseFunctionLikeMacroParameters(PPBaseScanner& scanner) {
     return parameters;
   }
 
-  const auto identifier = parseIdentifier(scanner);
-  parameters.push_back(identifier);
+  const auto identStartOffset = scanner.offset();
+  parameters.push_back(parseIdentifier(scanner));
 
   while (!scanner.reachedEndOfInput() && scanner.peek() != ')') {
     if (scanner.peek() != ',') {
-      return ErrorMessage("Expected ',' or ')' here.");
+      const auto startOffset = scanner.offset();
+      scanner.get();
+      const auto endOffset = scanner.offset();
+      return Error{{startOffset, endOffset}, "Expected ',' or ')' here.", ""};
     }
     scanner.get();  // skip , (ignore error conditions for now)
     skipSpacesAndComments(scanner);
-    const auto identifier = parseIdentifier(scanner);
-    parameters.push_back(identifier);
+    const auto parameter = parseIdentifier(scanner);
+    if (parameterHasDefined(parameter)) {
+      const auto identEndOffset = scanner.offset();
+      return Error{
+          {identStartOffset, identEndOffset},
+          std::format("Duplicated parameter \"{}\" in the function-like macro \"{}\".",
+                      parameter, macroName)};
+    }
+    parameters.push_back(parameter);
   }
 
   scanner.get();

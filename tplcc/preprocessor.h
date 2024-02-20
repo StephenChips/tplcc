@@ -21,17 +21,6 @@
 #include "error.h"
 #include "scanner.h"
 
-struct ErrorMessage {
-  std::string errorMessage;
-  std::string hint = "";
-
-  ErrorMessage(std::string errorMessage)
-      : errorMessage(std::move(errorMessage)){};
-
-  ErrorMessage(std::string errorMessage, std::string hint)
-      : errorMessage(std::move(errorMessage)), hint(std::move(hint)) {}
-};
-
 enum class MacroType { OBJECT_LIKE_MACRO, FUNCTION_LIKE_MACRO };
 
 struct MacroDefinition {
@@ -328,8 +317,8 @@ class PPImpl {
   CodeBuffer::Offset currentSectionEnd() const;
   bool lookaheadMatches(const PPBaseScanner& scanner, const std::string& s);
   void exitFullyScannedSections();
-  std::variant<std::vector<std::string>, ErrorMessage>
-  parseFunctionLikeMacroParameters(PPBaseScanner& scanner);
+  std::variant<std::vector<std::string>, Error>
+  parseFunctionLikeMacroParameters(const std::string& macroName, PPBaseScanner& scanner);
   std::tuple<MacroExpansionResult::Type, CodeBuffer::Offset> tryExpandingMacro(
       const ICopyableOffsetScanner& scanner,
       const MacroDefinition* const macroDefContext,
