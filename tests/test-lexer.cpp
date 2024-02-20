@@ -55,7 +55,7 @@ void testInvalidStringPrefix(const std::string& prefix) {
 	EXPECT_TRUE(errOut.listOfErrors.size() == 1);
 
 	const auto& error = errOut.listOfErrors[0];
-	EXPECT_EQ(error.errorMessage(), "\"" + prefix + "\" is not a valid prefix for a string literal.");
+	EXPECT_EQ(error.message(), "\"" + prefix + "\" is not a valid prefix for a string literal.");
 	EXPECT_EQ(error.hint(), "Invalid prefix.");
 }
 
@@ -75,7 +75,7 @@ void testStringMissEndingQuote(const std::string& str) {
 	catch (std::exception&) {
 		ASSERT_TRUE(errOut.listOfErrors.size() == 1);
 		const auto& error = errOut.listOfErrors[0];
-		EXPECT_EQ(error.errorMessage(), "The string literal has no ending quote.");
+		EXPECT_EQ(error.message(), "The string literal has no ending quote.");
 		EXPECT_EQ(error.hint(), "No ending quote.");
 	}
 }
@@ -93,7 +93,7 @@ void testCharacterMissEndingQuote(const std::string& str) {
 	catch (std::exception&) {
 		ASSERT_TRUE(errOut.listOfErrors.size() == 1);
 		const auto& error = errOut.listOfErrors[0];
-		EXPECT_EQ(error.errorMessage(), "The character literal has no ending quote.");
+		EXPECT_EQ(error.message(), "The character literal has no ending quote.");
 		EXPECT_EQ(error.hint(), "No ending quote.");
 	}
 }
@@ -109,9 +109,9 @@ void testInvalidCharacterPrefix(const std::string& prefix) {
 	EXPECT_EQ(lexer.next(), std::nullopt);
 	EXPECT_TRUE(errOut.listOfErrors.size() == 1);
 	const auto& error = errOut.listOfErrors[0];
-	EXPECT_EQ(error.errorMessage(), "\"" + prefix + "\" is not a valid prefix for a character literal.");
+	EXPECT_EQ(error.message(), "\"" + prefix + "\" is not a valid prefix for a character literal.");
 	EXPECT_EQ(error.hint(), "Invalid prefix.");
-	EXPECT_EQ(error.codeRange(), std::make_tuple(0, strOfCharLiteral.size()));
+	EXPECT_EQ(error.range(), std::make_tuple(0, strOfCharLiteral.size()));
 }
 
 void testInvalidNumberSuffix(std::string numberLiteralNoSuffix, std::string invalidSuffix) {
@@ -124,10 +124,10 @@ void testInvalidNumberSuffix(std::string numberLiteralNoSuffix, std::string inva
 	EXPECT_EQ(errOut.listOfErrors.size(), 1);
 
 	const auto& error = errOut.listOfErrors.front();
-	EXPECT_EQ(error.errorMessage(), "\"" + invalidSuffix + "\" is not a valid suffix for the number literal " + numberLiteralNoSuffix + ".");
+	EXPECT_EQ(error.message(), "\"" + invalidSuffix + "\" is not a valid suffix for the number literal " + numberLiteralNoSuffix + ".");
 	EXPECT_EQ(error.hint(), "invalid suffix.");
 	EXPECT_EQ(li.offset(), invalidNumber.size());
-	EXPECT_EQ(error.codeRange(), std::make_tuple(0, invalidNumber.size()));
+	EXPECT_EQ(error.range(), std::make_tuple(0, invalidNumber.size()));
 }
 
 TEST(TestLexer, test_keyword) {
@@ -257,9 +257,9 @@ TEST(TestLexer, test_lexer_error_exponent_has_no_digit) {
 		EXPECT_EQ(errOut.listOfErrors.size(), 1);
 		
 		const auto& error = errOut.listOfErrors[0];
-		EXPECT_EQ(error.errorMessage(), "Exponent part of number literal " + literals[i] + " has no digit.");
+		EXPECT_EQ(error.message(), "Exponent part of number literal " + literals[i] + " has no digit.");
 		EXPECT_EQ(error.hint(), "Exponent has no digit.");
-		EXPECT_EQ(error.codeRange(), std::make_tuple(0, literals[i].size()));
+		EXPECT_EQ(error.range(), std::make_tuple(0, literals[i].size()));
 		EXPECT_EQ(li.offset(), literals[i].size());
 	}
 }
@@ -280,9 +280,9 @@ TEST(TestLexer, test_lexer_error_hex_float_has_no_exponent) {
 		EXPECT_EQ(errOut.listOfErrors.size(), 1);
 
 		const auto& error = errOut.listOfErrors[0];
-		EXPECT_EQ(error.errorMessage(), "Hexadecimal floating point " + literals[i] + " has no exponent part.");
+		EXPECT_EQ(error.message(), "Hexadecimal floating point " + literals[i] + " has no exponent part.");
 		EXPECT_EQ(error.hint(), "Hex float has no exponent part.");
-		EXPECT_EQ(error.codeRange(), std::make_tuple(0, literals[i].size()));
+		EXPECT_EQ(error.range(), std::make_tuple(0, literals[i].size()));
 		EXPECT_EQ(li.offset(), literals[i].size());
 
 	}
@@ -303,8 +303,8 @@ TEST(TestLexer, test_lexer_error_invalid_octal_number) {
 		EXPECT_EQ(errOut.listOfErrors.size(), 1);
 
 		const auto& error = errOut.listOfErrors[0];
-		EXPECT_EQ(error.errorMessage(), "Invalid octal number.");
-		EXPECT_EQ(error.codeRange(), std::make_tuple(0, literals[i].size()));
+		EXPECT_EQ(error.message(), "Invalid octal number.");
+		EXPECT_EQ(error.range(), std::make_tuple(0, literals[i].size()));
 		EXPECT_EQ(error.hint(), "Invalid octal number.");
 		EXPECT_EQ(li.offset(), literals[i].size());
 	}
@@ -560,9 +560,9 @@ TEST(TestLexer, test_invalid_characters) {
 		catch (std::exception&) {
 			EXPECT_EQ(errOut.listOfErrors.size(), i + 1);
 			const auto& error = errOut.listOfErrors[i];
-			EXPECT_EQ(error.errorMessage(), std::string("Stray \"") + ch +  "\" in program.");
+			EXPECT_EQ(error.message(), std::string("Stray \"") + ch +  "\" in program.");
 			EXPECT_EQ(error.hint(), "Invalid character.");
-			EXPECT_EQ(error.codeRange(), std::make_tuple(i, i + 1));
+			EXPECT_EQ(error.range(), std::make_tuple(i, i + 1));
 		}
 	}
 }

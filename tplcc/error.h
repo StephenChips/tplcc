@@ -12,26 +12,26 @@
 #include "code-buffer.h"
 
 class Error {
-    std::string msg;
-    std::string hintMsg;
-    std::tuple<std::uint32_t, std::uint32_t> range;
+    std::string _message;
+    std::string _hint;
+    std::tuple<std::uint32_t, std::uint32_t> _range;
 
 public:
     Error() = default;
     Error(std::tuple<CodeBuffer::Offset, CodeBuffer::Offset> range,
           std::string msg, std::string hintMsg = "")
-        : range(range), msg(std::move(msg)), hintMsg(std::move(hintMsg)) {}
+        : _range(range), _message(std::move(msg)), _hint(std::move(hintMsg)) {}
 
     std::string hint() const {
-        return hintMsg;
+        return _hint;
     }
 
-    std::string errorMessage() const {
-        return msg;
+    std::string message() const {
+        return _message;
     }
 
-    std::tuple<CodeBuffer::Offset, CodeBuffer::Offset> codeRange() const {
-        return range;
+    std::tuple<CodeBuffer::Offset, CodeBuffer::Offset> range() const {
+        return _range;
     }
 };
 

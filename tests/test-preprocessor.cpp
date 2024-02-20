@@ -234,21 +234,21 @@ TEST_F(TestPreprocessor, define_function_macro) {
   EXPECT_EQ(scanInput(macroDIV + "DIV(a) DIV(a,b,c)"), "DIV(a) DIV(a,b,c)");
   EXPECT_EQ(errOut->listOfErrors.size(), 2);
   if (errOut->listOfErrors.size() == 2) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "The macro \"DIV\" requires 2 argument(s), but got 1.");
-    EXPECT_EQ(errOut->listOfErrors[1].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[1].message(),
               "The macro \"DIV\" requires 2 argument(s), but got 3.");
   }
 
   if (errOut->listOfErrors.size() == 1) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "The macro \"MCALL\" requires 2 argument(s), but got 1.");
   }
 
   EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID)"), "MCALL(ID)");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "The macro \"MCALL\" requires 2 argument(s), but got 1.");
   }
 
@@ -257,7 +257,7 @@ TEST_F(TestPreprocessor, define_function_macro) {
             "F(1, 2) A");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "Duplicated parameter \"a\" in the function-like macro \"F\".");
   }
 
@@ -267,7 +267,7 @@ TEST_F(TestPreprocessor, define_function_macro) {
       "daf df");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "unterminated argument list invoking macro \"F\"");
   }
 
@@ -276,9 +276,9 @@ TEST_F(TestPreprocessor, define_function_macro) {
       "#define G(a $)\n");
   EXPECT_EQ(errOut->listOfErrors.size(), 2);
   if (errOut->listOfErrors.size() == 2) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "Expected ')' before end of line");
-    EXPECT_EQ(errOut->listOfErrors[1].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[1].message(),
               "Expected ',' or ')' here.");
   }
 
@@ -287,16 +287,16 @@ TEST_F(TestPreprocessor, define_function_macro) {
       "#define G(\n");
   EXPECT_EQ(errOut->listOfErrors.size(), 2);
   if (errOut->listOfErrors.size() == 2) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "Expected parameter name before end of line");
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "Expected parameter name before end of line");
   }
 
   scanInput("#define F(G()) G()");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "Expected ',' or ')' here.");
   }
 
@@ -305,14 +305,14 @@ TEST_F(TestPreprocessor, define_function_macro) {
       "FOO((, (), ()))");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "The macro \"FOO\" requires 3 argument(s), but got 1.");
   }
 
   scanInput(macroDIV + "DIV(,,)");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
-    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
               "The macro \"DIV\" requires 2 argument(s), but got 3.");
   }
 
