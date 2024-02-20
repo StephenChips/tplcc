@@ -179,6 +179,15 @@ TEST_F(TestPreprocessor, define_function_macro) {
             "((10) / (3))");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
+  /* Handle empty arguments */
+  EXPECT_EQ(scanInput(macroID + "ID()"), "");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+  EXPECT_EQ(scanInput(macroDIV + "DIV(,)"), "(() / ())");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+  EXPECT_EQ(scanInput("#define T(a,b,c) (a,b,c)\n"
+                      "T(,,) T(a,,) T(,a,) T(,,a) T(a,a,) T(a,,a) T(,a,a)"),
+            "(,,) (a,,) (,a,) (,,a) (a,a,) (a,,a) (,a,a)");
+
   /* MCALL(ID, 123456) -> ID(123456) -> 123456 */
   EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID, 123456)"), "123456");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
@@ -198,8 +207,6 @@ TEST_F(TestPreprocessor, define_function_macro) {
                       "EXPAND(DEFER(DIV)(3, 4))"),
             "((3) / (4))");
 
-  EXPECT_EQ(scanInput(macroID + "ID()"), "");
-  EXPECT_EQ(errOut->listOfErrors.empty(), true);
   EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID,)"), "");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
@@ -213,6 +220,14 @@ TEST_F(TestPreprocessor, define_function_macro) {
   // If an function-like macro call is invalid, for example, the number of
   // arguments isn't equal to the number of parameter, the whole expression
   // will not be expanded and output the invalid expression instead.
+
+  EXPECT_EQ(scanInput(macroDIV + "DIV(a) DIV(a,b,c)"), "DIV(a) DIV(a,b,c)");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "The macro \"MCALL\" requires 2 argument(s), but got 1.");
+  }
+
   EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID)"), "MCALL(ID)");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
@@ -239,7 +254,9 @@ TEST_F(TestPreprocessor, define_function_macro) {
               "unterminated argument list invoking macro \"F\"");
   }
 
-  scanInput("#define F(a\n""#define G(a $)\n");
+  scanInput(
+      "#define F(a\n"
+      "#define G(a $)\n");
   EXPECT_EQ(errOut->listOfErrors.size(), 2);
   if (errOut->listOfErrors.size() == 2) {
     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
@@ -266,14 +283,21 @@ TEST_F(TestPreprocessor, define_function_macro) {
               "Expected ',' or ')' here.");
   }
 
-   scanInput(
-       "#define FOO(a, b, c) (a, b, c)\r\n"
-       "FOO((, (), ()))");
-   EXPECT_EQ(errOut->listOfErrors.size(), 1);
-   if (errOut->listOfErrors.size() == 1) {
-     EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
-               "The macro \"FOO\" requires 3 argument(s), but got 1.");
-   }
+  scanInput(
+      "#define FOO(a, b, c) (a, b, c)\r\n"
+      "FOO((, (), ()))");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "The macro \"FOO\" requires 3 argument(s), but got 1.");
+  }
+
+  scanInput(macroDIV + "DIV(,,)");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].errorMessage(),
+              "The macro \"DIV\" requires 2 argument(s), but got 3.");
+  }
 
   // TODO __VA_ARGS__
   // TODO: paint-blue
