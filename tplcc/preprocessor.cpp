@@ -48,9 +48,9 @@ std::string readAll(PPBaseScanner& scanner) {
   return content;
 }
 
-// The MSVC's std::isspace is troublesome. It will throw a runtime error when we
-// pass codepoint that is larger than 255, instead of simply returning false, so
-// we have to write our own version of isspace here.
+// The MSVC's std::isspace will throw a runtime error when we pass a codepoint
+// that is larger than 255. We have to write our own version of isspace here to
+// avoid this error.
 bool isSpace(int ch) {
   return ch == ' ' || ch == '\f' || ch == '\n' || ch == '\r' || ch == '\t' ||
          ch == '\v';
@@ -126,7 +126,8 @@ PPCharacter PPImpl::get() {
   // A row of spaces and comments will be merge into one space. That means
   // whenever we read a space or a comment, we will skip as far as possible then
   // return a space to the caller.
-  if (isSpace(scanner) || lookaheadMatches(scanner, "/*")) {
+  if (isSpace(scanner) || lookaheadMatches(scanner, "/*") ||
+      lookaheadMatches(scanner, "//")) {
     // Actually an error range will not start or end with a space or a comment,
     // so it doesn't matter what offset we return to the caller.
 
@@ -410,17 +411,15 @@ std::string PPImpl::parseFunctionLikeMacroArgument(
   return output;
 }
 
-void PPImpl::fastForwardToFirstOutputCharacter(PPBaseScanner& scanner) {
-  while (true) {
-    skipSpaces(scanner);
+void PPImpl::fastForwardToFirstOutputCharacter() {
+  auto copy = copyUnique(scanner);
+  skipSpacesAndComments(*copy);
 
-    if (scanner.peek() == '#') {
-      parseDirective();
-    } else if (scanner.peek() == ' ') {
-      skipSpacesAndComments(scanner);
-    } else {
-      break;
-    }
+  while (copy->peek() == '#') {
+    scanner.setOffset(copy->offset());
+    parseDirective();
+    copy->setOffset(scanner.offset());
+    skipSpacesAndComments(*copy);
   }
 }
 
@@ -433,12 +432,8 @@ void PPImpl::parseDirective() {
   ppds.get();  // ignore the leading #
   skipSpaces(ppds, isDirectiveSpace);
 
-  std::string directiveName;
-
   const auto offsetBeforeDirectiveName = scanner.offset();
-  while (!ppds.reachedEndOfInput() && !isDirectiveSpace(ppds.peek())) {
-    directiveName.push_back(ppds.get());
-  }
+  std::string directiveName = parseIdentifier(ppds);
   const auto offsetAfterDirectiveName = scanner.offset();
 
   if (directiveName == "") {

@@ -139,7 +139,6 @@ class PPBaseScanner : public ICopyableOffsetScanner {
   }
 
   int peek() const override {
-    // TODO collapses comments and spaces into one.
     if (reachedEndOfInput()) return EOF;
     const auto [codepoint, _] = _readUTF32(_codeBuffer.pos(_offset));
     return codepoint;
@@ -279,7 +278,7 @@ class PPImpl {
         setOfMacroDefinitions(setOfMacroDefinitions),
         codeCache(codeCache),
         scanner(*this, codeBuffer, readUTF32) {
-    fastForwardToFirstOutputCharacter(scanner);
+    fastForwardToFirstOutputCharacter();
   }
 
   PPCharacter get();
@@ -298,11 +297,12 @@ class PPImpl {
   }
 
   template <typename T>
-  void skipSpacesAndComments(PPBaseScanner& scanner, T&& isSpaceFn);
-  void skipSpacesAndComments(PPBaseScanner& scanner) {
+  std::optional<Error> skipSpacesAndComments(PPBaseScanner& scanner,
+                                             T&& isSpaceFn);
+  std::optional<Error> skipSpacesAndComments(PPBaseScanner& scanner) {
     return skipSpacesAndComments(scanner, ::isSpace);
   }
-  void fastForwardToFirstOutputCharacter(PPBaseScanner& scanner);
+  void fastForwardToFirstOutputCharacter();
   void parseDirective();
   void skipNewline(PPBaseScanner& scanner);
   template <typename T>
@@ -341,7 +341,8 @@ class PPImpl {
 };
 
 template <typename T>
-void PPImpl::skipSpacesAndComments(PPBaseScanner& scanner, T&& isSpaceFn) {
+std::optional<Error> PPImpl::skipSpacesAndComments(PPBaseScanner& scanner,
+                                                   T&& isSpaceFn) {
   while (!scanner.reachedEndOfInput()) {
     if (isNewlineCharacter(scanner.peek())) {
       canParseDirectives = true;
@@ -354,7 +355,21 @@ void PPImpl::skipSpacesAndComments(PPBaseScanner& scanner, T&& isSpaceFn) {
       continue;
     }
 
+    if (lookaheadMatches(scanner, "//")) {
+      scanner.get();
+      scanner.get();
+
+      while (!scanner.reachedEndOfInput() &&
+             !isNewlineCharacter(scanner.peek())) {
+        scanner.get();
+      }
+
+      skipNewline(scanner);
+      continue;
+    }
+
     if (lookaheadMatches(scanner, "/*")) {
+      const auto startOffset = scanner.offset();
       scanner.get();
       scanner.get();
 
@@ -363,8 +378,8 @@ void PPImpl::skipSpacesAndComments(PPBaseScanner& scanner, T&& isSpaceFn) {
       }
 
       if (scanner.reachedEndOfInput()) {
-        // TODO: THROW ERROR HERE
-        return;
+        return Error{
+            {startOffset, startOffset + 2}, "Unterminated comment.", ""};
       }
 
       scanner.get();
@@ -374,6 +389,8 @@ void PPImpl::skipSpacesAndComments(PPBaseScanner& scanner, T&& isSpaceFn) {
 
     break;
   }
+
+  return std::nullopt;
 }
 
 template <typename T>

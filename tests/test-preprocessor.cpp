@@ -79,10 +79,17 @@ TEST_F(TestPreprocessor, define_object_macro) {
             " ;");
 }
 
-TEST_F(TestPreprocessor, every_comment_will_become_a_space) {
-  EXPECT_EQ(scanInput("/*     #if */      #define /* FOO */ FOO /* 3 */ 3\n"
-                      "FO/**/O/* */FOO"),
+TEST_F(TestPreprocessor, test_comments_and_spaces) {
+  // Consecutive spaces and comments will be replaced by one space.
+  EXPECT_EQ(scanInput("/*     #if */        #define/* FOO */    FOO/* 3 */3\n"
+                      "FO   /**/O/* */   FOO"),
             "FO O 3");
+
+  // Simliary, multiple rows of line comment will be replaced by one space.
+  EXPECT_EQ(scanInput("// line comment\n"
+                      "// another line comment\n"
+                      "// yet another line comment"),
+            " ");
 }
 
 TEST_F(TestPreprocessor, backslash_return_should_be_discarded) {
@@ -94,11 +101,14 @@ TEST_F(TestPreprocessor, backslash_return_should_be_discarded) {
 BA\
 \
 \
-\
 R F\
 OO)";
 
   EXPECT_EQ(scanInput(str), "int a = 20 ");
+
+  EXPECT_EQ(scanInput("//\\\n"
+                      "int a = 3;"),
+            " ");
 }
 
 TEST_F(TestPreprocessor, directive_should_be_at_the_start_of_the_line) {
