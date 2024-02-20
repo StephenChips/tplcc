@@ -318,13 +318,16 @@ class PPImpl {
   bool lookaheadMatches(const PPBaseScanner& scanner, const std::string& s);
   void exitFullyScannedSections();
   std::variant<std::vector<std::string>, Error>
-  parseFunctionLikeMacroParameters(const std::string& macroName, PPBaseScanner& scanner);
+  parseFunctionLikeMacroParameters(const std::string& macroName,
+                                   PPBaseScanner& scanner);
   std::tuple<MacroExpansionResult::Type, CodeBuffer::Offset> tryExpandingMacro(
       const ICopyableOffsetScanner& scanner,
       const MacroDefinition* const macroDefContext,
       const std::vector<std::string>* const argContext);
-  std::vector<std::string> parseFunctionLikeMacroArgumentList(
-      ICopyableOffsetScanner& scanner,
+
+  std::variant<std::vector<std::string>, Error>
+  parseFunctionLikeMacroArgumentList(
+      ICopyableOffsetScanner& scanner, const MacroDefinition& macroDef,
       const MacroDefinition* const macroDefContext,
       const std::vector<std::string>* const argContext);
   std::string parseFunctionLikeMacroArgument(

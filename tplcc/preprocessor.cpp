@@ -196,8 +196,14 @@ PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
   std::string key;
   std::vector<std::string> arguments;
   if (macroDef->type == MacroType::FUNCTION_LIKE_MACRO) {
-    arguments =
-        parseFunctionLikeMacroArgumentList(*copy, macroDefContext, argContext);
+    auto result = parseFunctionLikeMacroArgumentList(
+        *copy, *macroDef, macroDefContext, argContext);
+
+    if (auto args = std::get_if<std::vector<std::string>>(&result)) {
+      arguments = std::move(*args);
+    } else {
+      return {std::get<Error>(result), scanner.offset()};
+    }
 
     // If there is nothing inside an argument list, e.g. ID(), the
     // macro will still have a empty string as its only argument.
@@ -238,8 +244,9 @@ PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
   return {MacroExpansionResult::Ok{sectionID, copy->offset()}, copy->offset()};
 }
 
-std::vector<std::string> PPImpl::parseFunctionLikeMacroArgumentList(
-    ICopyableOffsetScanner& scanner,
+std::variant<std::vector<std::string>, Error>
+PPImpl::parseFunctionLikeMacroArgumentList(
+    ICopyableOffsetScanner& scanner, const MacroDefinition& macroDef,
     const MacroDefinition* const macroDefContext,
     const std::vector<std::string>* const argContext) {
   std::vector<std::string> argumentList;
@@ -256,15 +263,29 @@ std::vector<std::string> PPImpl::parseFunctionLikeMacroArgumentList(
   argumentList.push_back(std::move(arg));
 
   while (scanner.peek() != ')') {
-    if (scanner.peek() != ',') {
-      // should return error to the parent
-      throw std::runtime_error("expects a ','");
+    if (scanner.peek() == ',') {
+      scanner.get();
+      auto args =
+          parseFunctionLikeMacroArgument(scanner, macroDefContext, argContext);
+      argumentList.push_back(std::move(args));
+      continue;
     }
-    scanner.get();  // skip ','
 
-    std::string arg =
-        parseFunctionLikeMacroArgument(scanner, macroDefContext, argContext);
-    argumentList.push_back(std::move(arg));
+    // While parsing a function-like macro's argument, the scanner will only
+    // stop when it has read a right parenthesis (that doesn't pair with a
+    // former-parsed left parenthis), a comma or when it have reached the end
+    // of input (in this case it will return a EOF). Because we have excluded
+    // the first two possibilities, We are sure that we will get an EOF in the
+    // following code.
+
+    const auto startOffset = scanner.offset();
+    const auto ch = scanner.get();  // will get an EOF here
+    const auto endOffset = scanner.offset();
+
+    return Error{{startOffset, endOffset},
+                 std::format("unterminated argument list invoking macro \"{}\"",
+                             macroDef.name),
+                 ""};
   }
 
   scanner.get();  // skip the ending ')'
@@ -466,8 +487,7 @@ void PPImpl::parseDirective() {
   } else {
     error = Error{{offsetBeforeDirectiveName, offsetAfterDirectiveName},
                   "Unknown preprocessing directive " + directiveName,
-                  ""
-    };
+                  ""};
     goto fail;
   }
 
@@ -554,12 +574,13 @@ std::variant<std::vector<std::string>, Error>
 PPImpl::parseFunctionLikeMacroParameters(const std::string& macroName,
                                          PPBaseScanner& scanner) {
   std::vector<std::string> parameters;
-  const auto parameterHasDefined = [&parameters](
-                                           const std::string& identifier) {
-    return std::find(parameters.begin(), parameters.end(), identifier) != parameters.end();
-  };
+  const auto parameterHasDefined =
+      [&parameters](const std::string& identifier) {
+        return std::find(parameters.begin(), parameters.end(), identifier) !=
+               parameters.end();
+      };
 
-  scanner.get(); // skip the beginning '('
+  scanner.get();  // skip the beginning '('
   skipSpacesAndComments(scanner);
 
   if (scanner.peek() == ')') {
@@ -584,8 +605,9 @@ PPImpl::parseFunctionLikeMacroParameters(const std::string& macroName,
       const auto identEndOffset = scanner.offset();
       return Error{
           {identStartOffset, identEndOffset},
-          std::format("Duplicated parameter \"{}\" in the function-like macro \"{}\".",
-                      parameter, macroName)};
+          std::format(
+              "Duplicated parameter \"{}\" in the function-like macro \"{}\".",
+              parameter, macroName)};
     }
     parameters.push_back(parameter);
   }
