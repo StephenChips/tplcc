@@ -189,8 +189,7 @@ PPImpl::tryExpandingMacro(const ICopyableOffsetScanner& scanner,
 
   const auto macroDef = setOfMacroDefinitions.find(identStr);
   if (macroDef == setOfMacroDefinitions.end() ||
-      macroDef->type == MacroType::FUNCTION_LIKE_MACRO &&
-          !copy->reachedEndOfInput() && copy->peek() != '(') {
+      macroDef->type == MacroType::FUNCTION_LIKE_MACRO && copy->peek() != '(') {
     return {MacroExpansionResult::Fail(), copy->offset()};
   }
 
