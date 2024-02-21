@@ -158,6 +158,21 @@ TEST_F(TestPreprocessor, define_function_macro) {
   const std::string macroID{"#define ID(x) x\n"};
   const std::string macroMCALL{"#define MCALL(func, x) func(x)\n"};
 
+  /* painted blue */
+  // EXPECT_EQ(scanInput("#define R R"), "R");
+  // EXPECT_EQ(scanInput("#define R() R()"), "R()");
+  // EXPECT_EQ(
+  //     scanInput("#define R() V()\n"
+  //               "#define V() R()\n"
+  //                     "R()"),
+  //           "R()");
+  // EXPECT_EQ(scanInput("#define R(a) a()\n"
+  //                     "R(R)"),
+  //           "R()");
+  // EXPECT_EQ(scanInput("#define FOO(x) BAR x\n"
+  //                     "FOO(FOO)(2)"),
+  //           "BAR FOO(2)");
+
   /* The simplest situation */
   EXPECT_EQ(scanInput(macroDIV + "DIV(4, 3)"), "((4) / (3))");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
@@ -198,12 +213,33 @@ TEST_F(TestPreprocessor, define_function_macro) {
                       "T(,,) T(a,,) T(,a,) T(,,a) T(a,a,) T(a,,a) T(,a,a)"),
             "(,,) (a,,) (,a,) (,,a) (a,a,) (a,,a) (,a,a)");
 
+  EXPECT_EQ(scanInput(macroID + "#define T(x) x\n"
+                                "ID(T(3))"),
+            "3");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
   /* MCALL(ID, 123456) -> ID(123456) -> 123456 */
   EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID, 123456)"), "123456");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
-  /* ID(DIV)(3, 4) -> DIV(3, 4) -> ((3) / (4)) */
-  EXPECT_EQ(scanInput(macroID + macroMCALL + "ID(DIV)(3, 4)"), "((3) / (4))");
+  /* Situation that an expanded text's last token happens to be a function-like
+   * macro's name and there is a argument list right after it, result in a
+   * further expansion.
+   *
+   * For simplicity let's call this situation "multiple arglist macro
+   * expansion". */
+  EXPECT_EQ(scanInput(macroID + macroDIV + "ID(DIV)(3, 4)"), "((3) / (4))");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+  EXPECT_EQ(scanInput(macroID + "ID(ID)(3)"),
+            "ID(3)");  // corner case: painted-blue
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+  EXPECT_EQ(scanInput(macroDIV + "#define X(a) a\n"
+                                 "#define FOO X\n"
+                                 "FOO(3)"),
+            "3");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  EXPECT_EQ(scanInput(macroID + "ID((3,4))"), "(3,4)");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
   const std::string macroEMPTY = "#define EMPTY\n";
@@ -278,8 +314,7 @@ TEST_F(TestPreprocessor, define_function_macro) {
   if (errOut->listOfErrors.size() == 2) {
     EXPECT_EQ(errOut->listOfErrors[0].message(),
               "Expected ')' before end of line");
-    EXPECT_EQ(errOut->listOfErrors[1].message(),
-              "Expected ',' or ')' here.");
+    EXPECT_EQ(errOut->listOfErrors[1].message(), "Expected ',' or ')' here.");
   }
 
   scanInput(
@@ -296,8 +331,7 @@ TEST_F(TestPreprocessor, define_function_macro) {
   scanInput("#define F(G()) G()");
   EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
-    EXPECT_EQ(errOut->listOfErrors[0].message(),
-              "Expected ',' or ')' here.");
+    EXPECT_EQ(errOut->listOfErrors[0].message(), "Expected ',' or ')' here.");
   }
 
   scanInput(
@@ -317,6 +351,8 @@ TEST_F(TestPreprocessor, define_function_macro) {
   }
 
   // TODO __VA_ARGS__
-  // TODO: paint-blue
+  // TODO paint-blue
   // TODO #/## operator
+  // TODO #if #ifdef #ifndef
+  // TODO #pragma #line
 }
