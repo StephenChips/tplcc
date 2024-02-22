@@ -222,12 +222,9 @@ TEST_F(TestPreprocessor, define_function_macro) {
   EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID, 123456)"), "123456");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
-  /* Situation that an expanded text's last token happens to be a function-like
-   * macro's name and there is a argument list right after it, result in a
-   * further expansion.
-   *
-   * For simplicity let's call this situation "multiple arglist macro
-   * expansion". */
+  /* An expanded-text is treated as if they were source input. If it's some
+   * tokens in the expanded text forms a macro call with some other tokens
+   * follow the expanded-text. A new expansion will happen. */
   EXPECT_EQ(scanInput(macroID + macroDIV + "ID(DIV)(3, 4)"), "((3) / (4))");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
   EXPECT_EQ(scanInput(macroID + "ID(ID)(3)"),
@@ -238,6 +235,10 @@ TEST_F(TestPreprocessor, define_function_macro) {
                                  "FOO(3)"),
             "3");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
+  EXPECT_EQ(macroDIV +
+                "#define V(a) DIV(a, \n"
+                "V(3) 4)",
+            "((3) / (4))");
 
   EXPECT_EQ(scanInput(macroID + "ID((3,4))"), "(3,4)");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
