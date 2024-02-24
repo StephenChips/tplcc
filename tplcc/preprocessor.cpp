@@ -540,7 +540,7 @@ CodeBuffer::Offset PPImpl::currentSectionEnd() const {
 
 bool PPImpl::lookaheadMatches(const PPBaseScanner& scanner,
                               const std::string& s) {
-  auto copy = scanner.copy();
+  auto copy = copyUnique(scanner);
   for (const char ch : s) {
     if (copy->peek() == EOF || copy->peek() != ch) return false;
     copy->get();
