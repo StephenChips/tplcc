@@ -14,7 +14,7 @@ add_executable(tests-main
 	"test-preprocessor.cpp" 
 	 
 	"../tplcc/lexer.cpp"
-	"../tplcc/preprocessor.cpp"
+	
 	"../tplcc/code-buffer.cpp"
 	"../tplcc/encoding.cpp"
  "utils/helpers.h" "utils/helpers.cpp")

@@ -6,7 +6,7 @@
 add_executable (tplcc
 	"tplcc.cpp"
 	"lexer.cpp"
-	"preprocessor.cpp"
+	
 	"code-buffer.cpp"
 	"encoding.cpp"
  "helper.h" "pp-scanner.h")
