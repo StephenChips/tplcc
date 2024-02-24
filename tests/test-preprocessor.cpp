@@ -11,7 +11,7 @@
 class TestPreprocessor : public ::testing::Test {
  protected:
   std::unique_ptr<ReportErrorStub> errOut;
-  std::unique_ptr<Preprocessor> pp;
+  std::unique_ptr<Preprocessor<>> pp;
   std::unique_ptr<CodeBuffer> codeBuffer;
 
   std::string scanInput(const std::string& inputStr) {
@@ -22,7 +22,7 @@ class TestPreprocessor : public ::testing::Test {
   void setUpPreprocessor(const std::string& inputStr) {
     codeBuffer = std::make_unique<CodeBuffer>(inputStr);
     errOut = std::make_unique<ReportErrorStub>();
-    pp = std::make_unique<Preprocessor>(*codeBuffer, *errOut);
+    pp = std::make_unique<Preprocessor<>>(*codeBuffer, *errOut);
   }
 
  private:

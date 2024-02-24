@@ -179,7 +179,12 @@ class PPDirectiveScanner : public PPBaseScanner {
   CodeBuffer::SectionID sectionID;
 
  public:
-  PPDirectiveScanner(const PPScanner& scanner);
+     template <ByteDecoderConcept F>
+     PPDirectiveScanner(const PPScanner<F>& scanner)
+         : PPBaseScanner(scanner),
+         sectionID(scanner.ppImpl().currentSectionID()) {
+    skipBackslashReturn();
+  }
   bool reachedEndOfInput() const override;
   PPDirectiveScanner* copy() const { return new PPDirectiveScanner(*this); }
 };
@@ -247,14 +252,11 @@ class PPImpl {
   std::vector<CodeBuffer::Offset> stackOfStoredOffsets;
 
   std::optional<CodeBuffer::Offset> identEndOffset;
-  PPScanner scanner;
+  PPScanner<F> scanner;
 
   std::optional<PPCharacter> lookaheadBuffer;
 
   bool canParseDirectives;
-
-  friend class PPDirectiveScanner;
-  friend class PPScanner;
 
  public:
   PPImpl(CodeBuffer& codeBuffer, IReportError& errOut, F&& readUTF32)
@@ -387,7 +389,7 @@ void PPImpl<F>::skipSpaces(PPBaseScanner& scanner, T&& isSpaceFn) {
   }
 }
 
-template <ByteDecoderConcept F>
+template <ByteDecoderConcept F = decltype(utf8)>
 class Preprocessor {
   mutable PPImpl<F> ppImpl;
   mutable std::optional<PPCharacter> lookaheadBuffer;
@@ -395,11 +397,8 @@ class Preprocessor {
  public:
   Preprocessor(
       CodeBuffer& codeBuffer, IReportError& errOut,
-      std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+      F&& readUTF32 = utf8)
       : ppImpl(codeBuffer, errOut, std::move(readUTF32)) {}
-
-  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut)
-      : Preprocessor(codeBuffer, errOut, utf8) {}
 
   PPCharacter get() {
     if (lookaheadBuffer) {
@@ -474,11 +473,6 @@ bool isSpace(int ch) {
 }
 bool isDirectiveSpace(int ch) { return ch == ' ' || ch == '\t'; }
 bool isNewlineCharacter(int ch) { return ch == '\r' || ch == '\n'; }
-
-PPDirectiveScanner::PPDirectiveScanner(const PPScanner& scanner)
-    : PPBaseScanner(scanner), sectionID(scanner.ppImpl().currentSectionID()) {
-  skipBackslashReturn();
-};
 
 bool PPDirectiveScanner::reachedEndOfInput() const {
   if (_offset == _codeBuffer.sectionEnd(sectionID)) return true;
