@@ -6,10 +6,10 @@
 add_executable (tplcc
 	"tplcc.cpp"
 	"lexer.cpp"
-	
 	"code-buffer.cpp"
 	"encoding.cpp"
- "helper.h" "pp-scanner.h")
+	"preprocessor.h"
+)
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET tplcc PROPERTY CXX_STANDARD 20)
