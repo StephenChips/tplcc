@@ -8,8 +8,6 @@
 #include <concepts>
 #include <cstdint>
 #include <format>
-#include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -130,10 +128,20 @@ struct IOffsetScanner : IBaseScanner {
   virtual ~IOffsetScanner() {}
 };
 
-struct IPreprocessorScanner : IOffsetScanner {
-  virtual std::tuple<int, int> peek2() const = 0;
-  virtual ~IPreprocessorScanner() {}
+template <typename T>
+struct ILookaheadScanner : IOffsetScanner {
+  virtual T lookaheadScanner() const = 0;
+  virtual ~ILookaheadScanner() {}
 };
+
+template <std::derived_from<IBaseScanner> T>
+bool lookaheadMatches(ILookaheadScanner<T>& scanner, const std::string& str) {
+  auto lookaheadScanner = scanner.lookaheadScanner();
+  for (const auto& ch : str) {
+    if (lookaheadScanner.get() != ch) return false;
+  }
+  return true;
+}
 
 class CharOffsetRecorder : public IBaseScanner {
   IOffsetScanner& _scanner;
@@ -189,46 +197,75 @@ class OffsetCharScanner : public IOffsetScanner {
   CodeBuffer::Offset offset() const override { return _offsets[_count]; }
 };
 
-
-bool operator==(const std::tuple<int, int>& lhs, const std::string rhs) {
-  return rhs.size() == 2 && std::get<0>(lhs) == rhs[0] &&
-         std::get<1>(lhs) == rhs[1];
-}
+template <ByteDecoderConcept F>
+class PPScanner;
 
 template <ByteDecoderConcept F>
-class PPScanner : public IPreprocessorScanner {
- protected:
+class PPLookaheadScanner : public IBaseScanner {
+  const PPScanner<F>& _pps;
+
+  int _indexOfStackItem;
+  CodeBuffer::Offset _offset;
+
+ public:
+  PPLookaheadScanner(const PPScanner<F>& pps)
+      : _pps(pps),
+        _indexOfStackItem(pps.stackOfSectionID.size() - 1),
+        _offset(pps._offset) {
+    skipBackslashReturn();
+  }
+
+  int get();
+  int peek() const override;
+  bool reachedEndOfInput() const override;
+  void refresh();
+
+ private:
+  void skipBackslashReturn();
+  CodeBuffer::SectionID currentSectionID();
+  CodeBuffer::Offset currentSectionEnd();
+};
+
+template <ByteDecoderConcept F>
+class PPScanner : public ILookaheadScanner<PPLookaheadScanner<F>> {
+  friend class PPLookaheadScanner<F>;
+
   CodeBuffer& _codeBuffer;
   CodeBuffer::Offset _offset = 0;
-  F& _readUTF32;
+  F& _decodeChar;
 
   std::vector<CodeBuffer::SectionID> stackOfSectionID;
   std::vector<CodeBuffer::Offset> stackOfStoredOffsets;
 
  public:
   PPScanner(CodeBuffer& codeBuffer, F& readUTF32)
-      : _codeBuffer(codeBuffer), _readUTF32(readUTF32) {
-    skipBackslashReturn();
-  }
+      : _codeBuffer(codeBuffer), _decodeChar(readUTF32) {}
 
-  int get() override {
+  int get() {
     if (reachedEndOfInput()) return EOF;
-    const auto [codepoint, codelen] = _readUTF32(_codeBuffer.pos(_offset));
+    const auto charOffset = _offset;
+    const auto [codepoint, codelen] = _decodeChar(_codeBuffer.pos(_offset));
     _offset += codelen;
-    skipBackslashReturn();
+    if (currentSectionID() == 0) skipBackslashReturn();
+    while (!stackOfSectionID.empty() && _offset == currentSectionEnd()) {
+      exitSection();
+    }
     return codepoint;
   }
 
-  int peek() const override {
-    if (reachedEndOfInput()) return EOF;
-    const auto [codepoint, _] = _readUTF32(_codeBuffer.pos(_offset));
-    return codepoint;
+  int peek() const { return PPLookaheadScanner(*this).peek(); }
+
+  bool reachedEndOfInput() const {
+    return stackOfSectionID.empty() && _offset == _codeBuffer.sectionEnd(0);
   }
 
-  bool reachedEndOfInput() const { return true; }
+  PPLookaheadScanner<F> lookaheadScanner() const {
+    return PPLookaheadScanner<F>(*this);
+  }
 
-  // TODO
-  std::tuple<int, int> peek2() const override { return {EOF, EOF}; }
+  CodeBuffer::Offset offset() const { return _offset; }
+
+  F& byteDecoder() { return _decodeChar; }
 
   void enterSection(CodeBuffer::SectionID id) {
     stackOfSectionID.push_back(id);
@@ -236,56 +273,104 @@ class PPScanner : public IPreprocessorScanner {
     _offset = _codeBuffer.section(id);
   }
 
+ private:
   void exitSection() {
     stackOfSectionID.pop_back();
-    if (!stackOfStoredOffsets.empty()) {
-      _offset = stackOfStoredOffsets.back();
-      stackOfStoredOffsets.pop_back();
+    _offset = stackOfStoredOffsets.back();
+    stackOfStoredOffsets.pop_back();
+  }
+
+  void skipBackslashReturn() {
+    while (_offset != currentSectionEnd()) {
+      const auto [ch1, l1] = _decodeChar(_codeBuffer.pos(_offset));
+      if (ch1 != '\\' || _offset + l1 == currentSectionEnd()) return;
+      const auto [ch2, l2] = _decodeChar(_codeBuffer.pos(_offset + l1));
+      if (ch2 != '\n') return;
+      _offset += l1 + l2;
     }
   }
 
-  void exitFullyScannedSections() {
-    while (!stackOfSectionID.empty() &&
-           _offset == _codeBuffer.sectionEnd(stackOfSectionID.back())) {
-      exitSection();
-    }
-  }
-  /* PPImpl */
-
-  CodeBuffer::SectionID currentSectionID() const {
+  CodeBuffer::SectionID currentSectionID() {
     return stackOfSectionID.empty() ? 0 : stackOfSectionID.back();
   }
 
-  CodeBuffer::Offset currentSection() const {
-    return codeBuffer.section(currentSectionID());
-  }
-
-  CodeBuffer::Offset currentSectionEnd() const {
-    return codeBuffer.sectionEnd(currentSectionID());
-  }
-
-  CodeBuffer::Offset offset() const { return _offset; }
-
-  CodeBuffer& codeBuffer() { return _codeBuffer; }
-  const CodeBuffer& codeBuffer() const { return _codeBuffer; }
-
-  F& byteDecoder() { return _readUTF32; }
-
- protected:
-  void skipBackslashReturn() {
-    if (reachedEndOfInput()) return;
-    const auto [ch1, l1] = _readUTF32(_codeBuffer.pos(_offset));
-    if (ch1 != '\\' || reachedEndOfInput()) return;
-    _offset++;
-    const auto [ch2, l2] = _readUTF32(_codeBuffer.pos(_offset));
-    if (ch2 != '\n') return;
-    _offset++;
-    skipBackslashReturn();
+  CodeBuffer::Offset currentSectionEnd() {
+    return _codeBuffer.sectionEnd(currentSectionID());
   }
 };
 
 template <ByteDecoderConcept F>
-class PPDirectiveScanner : public IPreprocessorScanner {
+int PPLookaheadScanner<F>::get() {
+  if (reachedEndOfInput()) return EOF;
+  const auto [codepoint, codelen] =
+      _pps._decodeChar(_pps._codeBuffer.pos(_offset));
+  _offset += codelen;
+  if (currentSectionID() == 0) skipBackslashReturn();
+  while (_indexOfStackItem >= 0 && _offset == currentSectionEnd()) {
+    _offset = _pps.stackOfStoredOffsets[_indexOfStackItem];
+    _indexOfStackItem--;
+  }
+  return codepoint;
+}
+
+template <ByteDecoderConcept F>
+int PPLookaheadScanner<F>::peek() const {
+  PPLookaheadScanner copy(*this);
+  return copy.get();
+}
+
+template <ByteDecoderConcept F>
+bool PPLookaheadScanner<F>::reachedEndOfInput() const {
+  return _indexOfStackItem == 0 && _offset == _pps._codeBuffer.sectionEnd(0);
+}
+
+template <ByteDecoderConcept F>
+void PPLookaheadScanner<F>::refresh() {
+  _indexOfStackItem = _pps.stackOfSectionID.size() - 1;
+  _offset = _pps._offset;
+}
+
+template <ByteDecoderConcept F>
+CodeBuffer::SectionID PPLookaheadScanner<F>::currentSectionID() {
+  return _indexOfStackItem == -1 ? 0 : _pps.stackOfSectionID[_indexOfStackItem];
+}
+
+template <ByteDecoderConcept F>
+CodeBuffer::Offset PPLookaheadScanner<F>::currentSectionEnd() {
+  return _pps._codeBuffer.sectionEnd(currentSectionID());
+}
+
+template <ByteDecoderConcept F>
+void PPLookaheadScanner<F>::skipBackslashReturn() {
+  while (_offset != currentSectionEnd()) {
+    const auto [ch1, l1] = _pps._decodeChar(_pps._codeBuffer.pos(_offset));
+    if (ch1 != '\\' || _offset + l1 == currentSectionEnd()) return;
+    const auto [ch2, l2] = _pps._decodeChar(_pps._codeBuffer.pos(_offset + l1));
+    if (ch2 != '\n') return;
+    _offset += l1 + l2;
+  }
+}
+
+template <ByteDecoderConcept F>
+class PPDirectiveScanner;
+
+template <ByteDecoderConcept F>
+class PPDirectiveLookaheadScanner : public IBaseScanner {
+  PPLookaheadScanner<F> _ppls;
+
+ public:
+  PPDirectiveLookaheadScanner(PPLookaheadScanner<F> ppls) : _ppls(ppls){};
+
+  int get() override;
+  int peek() const override;
+  bool reachedEndOfInput() const override;
+  void refresh();
+};
+
+template <ByteDecoderConcept F>
+class PPDirectiveScanner
+    : public ILookaheadScanner<PPDirectiveLookaheadScanner<F>> {
+  friend class PPDirectiveLookaheadScanner<F>;
   PPScanner<F>& _scanner;
 
  public:
@@ -301,67 +386,78 @@ class PPDirectiveScanner : public IPreprocessorScanner {
     return _scanner.peek();
   }
 
-  std::tuple<int, int> peek2() const override {
-    if (reachedEndOfInput()) return {EOF, EOF};
-    auto str = _scanner.peek2();
-    auto& secondChar = std::get<1>(str);
-    if (isNewlineCharacter(secondChar)) secondChar = EOF;
-    return str;
-  }
-
   bool reachedEndOfInput() const override {
     return _scanner.reachedEndOfInput() || isNewlineCharacter(_scanner.peek());
   }
 
   CodeBuffer::Offset offset() const { return _scanner.offset(); }
+
+  PPDirectiveLookaheadScanner<F> lookaheadScanner() const {
+    return PPDirectiveLookaheadScanner<F>(_scanner.lookaheadScanner());
+  }
 };
 
-class RawBufferScanner : public IPreprocessorScanner {
+template <ByteDecoderConcept F>
+int PPDirectiveLookaheadScanner<F>::get() {
+  if (reachedEndOfInput()) return EOF;
+  return _ppls.get();
+}
+
+template <ByteDecoderConcept F>
+int PPDirectiveLookaheadScanner<F>::peek() const {
+  if (reachedEndOfInput()) return EOF;
+  return _ppls.peek();
+}
+
+template <ByteDecoderConcept F>
+bool PPDirectiveLookaheadScanner<F>::reachedEndOfInput() const {
+  return _ppls.reachedEndOfInput() || isNewlineCharacter(_ppls.peek());
+}
+
+template <ByteDecoderConcept F>
+void PPDirectiveLookaheadScanner<F>::refresh() {
+  _ppls.refresh();
+}
+
+class RawBufferLookaheadScanner : public IBaseScanner {};
+
+template <ByteDecoderConcept F>
+class RawBufferScanner : public ILookaheadScanner<RawBufferScanner<F>> {
   const char* const _buffer;
   const std::size_t _bufferSize;
-  std::function<std::tuple<int, int>(const unsigned char*)> _readUTF32;
+  F& _decodeChar;
 
   const char* _cursor;
 
  public:
   RawBufferScanner(
       const char* buffer, std::size_t bufferSize,
-      std::function<std::tuple<int, int>(const unsigned char*)> readUTF32)
+      F& readUTF32)
       : _buffer(buffer),
         _bufferSize(bufferSize),
-        _readUTF32(readUTF32),
+        _decodeChar(readUTF32),
         _cursor(buffer){};
 
   int get() override {
     if (_cursor == _buffer + _bufferSize) return EOF;
     const auto [codepoint, charlen] =
-        _readUTF32(reinterpret_cast<const unsigned char*>(_cursor));
+        _decodeChar(reinterpret_cast<const unsigned char*>(_cursor));
     _cursor += charlen;
     return codepoint;
   }
   int peek() const override {
     if (_cursor == _buffer + _bufferSize) return EOF;
     const auto [codepoint, charlen] =
-        _readUTF32(reinterpret_cast<const unsigned char*>(_cursor));
+        _decodeChar(reinterpret_cast<const unsigned char*>(_cursor));
     return codepoint;
-  }
-
-  std::tuple<int, int> peek2() const override {
-    if (_cursor == _buffer + _bufferSize) return {EOF, EOF};
-    if (_cursor + 1 == _buffer + _bufferSize)
-      return {peek(), EOF};
-    else {
-      const auto [ch1, len1] =
-          _readUTF32(reinterpret_cast<const unsigned char*>(_cursor));
-      const auto [ch2, len2] =
-          _readUTF32(reinterpret_cast<const unsigned char*>(_cursor + len1));
-      return {ch1, ch2};
-    }
   }
 
   bool reachedEndOfInput() const override {
     return _cursor == _buffer + _bufferSize;
   }
+
+  RawBufferScanner<F> lookaheadScanner() const { return *this; }
+
   CodeBuffer::Offset offset() const { return _cursor - _buffer; }
 };
 
@@ -408,10 +504,11 @@ class PPImpl {
  private:
   bool reachedEndOfCurrentSection() const;
 
-  template <typename T>
-  std::optional<Error> skipSpacesAndComments(IPreprocessorScanner& scanner,
-                                             T&& isSpaceFn);
-  std::optional<Error> skipSpacesAndComments(IPreprocessorScanner& scanner) {
+  template <std::derived_from<IBaseScanner> T, typename U>
+  std::optional<Error> skipSpacesAndComments(ILookaheadScanner<T>& scanner,
+                                             U&& isSpaceFn);
+  template <std::derived_from<IBaseScanner> T>
+  std::optional<Error> skipSpacesAndComments(ILookaheadScanner<T>& scanner) {
     return skipSpacesAndComments(scanner, ::isSpace);
   }
   void fastForwardToFirstOutputCharacter();
@@ -426,21 +523,27 @@ class PPImpl {
     return skipSpaces(scanner, ::isSpace);
   }
 
+  template <std::derived_from<IBaseScanner> T>
   std::variant<std::vector<std::string>, Error>
   parseFunctionLikeMacroParameters(const std::string& macroName,
-                                   IPreprocessorScanner& scanner);
+                                   ILookaheadScanner<T>& scanner);
+
+  template <std::derived_from<IBaseScanner> T>
   MacroExpansionResult::Type tryExpandingMacro(
-      const std::string& macroName, IPreprocessorScanner& scanner,
+      const std::string& macroName, ILookaheadScanner<T>& scanner,
       const MacroDefinition* const macroDefContext,
       const std::vector<std::string>* const argContext);
 
+  template <std::derived_from<IBaseScanner> T>
   std::variant<std::vector<std::string>, Error>
   parseFunctionLikeMacroArgumentList(
-      IPreprocessorScanner& scanner, const MacroDefinition& macroDef,
+      ILookaheadScanner<T>& scanner, const MacroDefinition& macroDef,
       const MacroDefinition* const macroDefContext,
       const std::vector<std::string>* const argContext);
+
+  template <std::derived_from<IBaseScanner> T>
   std::string parseFunctionLikeMacroArgument(
-      IPreprocessorScanner& scanner,
+      ILookaheadScanner<T>& scanner,
       const MacroDefinition* const macroDefContext,
       const std::vector<std::string>* const argContext);
 
@@ -450,9 +553,9 @@ class PPImpl {
 };
 
 template <ByteDecoderConcept F>
-template <typename T>
+template <std::derived_from<IBaseScanner> T, typename U>
 std::optional<Error> PPImpl<F>::skipSpacesAndComments(
-    IPreprocessorScanner& scanner, T&& isSpaceFn) {
+    ILookaheadScanner<T>& scanner, U&& isSpaceFn) {
   while (!scanner.reachedEndOfInput()) {
     if (isNewlineCharacter(scanner.peek())) {
       canParseDirectives = true;
@@ -465,7 +568,7 @@ std::optional<Error> PPImpl<F>::skipSpacesAndComments(
       continue;
     }
 
-    if (scanner.peek2() == "//") {
+    if (lookaheadMatches(scanner, "//")) {
       scanner.get();
       scanner.get();
 
@@ -478,12 +581,12 @@ std::optional<Error> PPImpl<F>::skipSpacesAndComments(
       continue;
     }
 
-    if (scanner.peek2() == "/*") {
+    if (lookaheadMatches(scanner, "/*")) {
       const auto startOffset = scanner.offset();
       scanner.get();
       scanner.get();
 
-      while (!scanner.reachedEndOfInput() && scanner.peek2() != "*/") {
+      while (!scanner.reachedEndOfInput() && !lookaheadMatches(scanner, "*/")) {
         scanner.get();
       }
 
@@ -616,24 +719,24 @@ bool isFirstCharOfIdentifier(const char ch) {
 
 template <ByteDecoderConcept F>
 PPCharacter PPImpl<F>::get() {
-  if (scanner.reachedEndOfInput()) {
-    return PPCharacter::eof();
-  }
-
   if (identScanner) {
-    const auto offset = scanner.offset();
-    const auto ch = scanner.get();
-    if (ch == EOF) {
+    const auto offset = identScanner->offset();
+    const auto ch = identScanner->get();
+    if (identScanner->reachedEndOfInput()) {
       identScanner = nullptr;
     }
     return PPCharacter(ch, offset);
   }
 
+  if (scanner.reachedEndOfInput()) {
+    return PPCharacter::eof();
+  }
+
   // A row of spaces and comments will be merge into one space. That means
   // whenever we read a space or a comment, we will skip as far as possible then
   // return a space to the caller.
-  if (isSpace(scanner.peek()) || scanner.peek2() == "/*" ||
-      scanner.peek2() == "//") {
+  if (isSpace(scanner.peek()) || lookaheadMatches(scanner, "/*") ||
+      lookaheadMatches(scanner, "//")) {
     // Actually an error range will not start or end with a space or a comment,
     // so it doesn't matter what offset we return to the caller.
 
@@ -681,8 +784,9 @@ PPCharacter PPImpl<F>::get() {
 }
 
 template <ByteDecoderConcept F>
+template <std::derived_from<IBaseScanner> T>
 MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
-    const std::string& macroName, IPreprocessorScanner& scanner,
+    const std::string& macroName, ILookaheadScanner<T>& scanner,
     const MacroDefinition* const macroDefContext,
     const std::vector<std::string>* const argContext) {
   assert(macroDefContext == nullptr && argContext == nullptr ||
@@ -745,9 +849,10 @@ MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
 }
 
 template <ByteDecoderConcept F>
+template <std::derived_from<IBaseScanner> T>
 std::variant<std::vector<std::string>, Error>
 PPImpl<F>::parseFunctionLikeMacroArgumentList(
-    IPreprocessorScanner& scanner, const MacroDefinition& macroDef,
+    ILookaheadScanner<T>& scanner, const MacroDefinition& macroDef,
     const MacroDefinition* const macroDefContext,
     const std::vector<std::string>* const argContext) {
   std::vector<std::string> argumentList;
@@ -801,7 +906,7 @@ std::string PPImpl<F>::expandFunctionLikeMacro(
 
   if (macroDef.body.empty()) return " ";
 
-  RawBufferScanner rbs(macroDef.body.c_str(), macroDef.body.size(),
+  RawBufferScanner<F> rbs(macroDef.body.c_str(), macroDef.body.size(),
                        scanner.byteDecoder());
   std::string output;
 
@@ -837,8 +942,10 @@ std::string PPImpl<F>::expandFunctionLikeMacro(
 }
 
 template <ByteDecoderConcept F>
+
+template <std::derived_from<IBaseScanner> T>
 std::string PPImpl<F>::parseFunctionLikeMacroArgument(
-    IPreprocessorScanner& scanner, const MacroDefinition* const macroDefContext,
+    ILookaheadScanner<T>& scanner, const MacroDefinition* const macroDefContext,
     const std::vector<std::string>* const argContext) {
   using namespace MacroExpansionResult;
 
@@ -878,7 +985,8 @@ std::string PPImpl<F>::parseFunctionLikeMacroArgument(
         }
       }
 
-      auto res = tryExpandingMacro(identifier, scanner, macroDefContext, argContext);
+      auto res =
+          tryExpandingMacro(identifier, scanner, macroDefContext, argContext);
 
       if (const auto ptr = std::get_if<Error>(&res)) {
         errOut.reportsError(std::get<Error>(std::move(res)));
@@ -904,7 +1012,7 @@ std::string PPImpl<F>::parseFunctionLikeMacroArgument(
 template <ByteDecoderConcept F>
 void PPImpl<F>::fastForwardToFirstOutputCharacter() {
   for (;;) {
-    while (isSpace(scanner.peek())) scanner.get();
+    skipSpacesAndComments(scanner);
     if (scanner.peek() != '#') break;
     parseDirective();
   }
@@ -989,9 +1097,10 @@ fail:
 //
 
 template <ByteDecoderConcept F>
+template <std::derived_from<IBaseScanner> T>
 std::variant<std::vector<std::string>, Error>
 PPImpl<F>::parseFunctionLikeMacroParameters(const std::string& macroName,
-                                            IPreprocessorScanner& scanner) {
+                                            ILookaheadScanner<T>& scanner) {
   std::vector<std::string> parameters;
   const auto parameterHasDefined =
       [&parameters](const std::string& identifier) {

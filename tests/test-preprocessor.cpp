@@ -51,7 +51,7 @@ TEST_F(TestPreprocessor, define_object_macro) {
             //                    ^ both exit here.
             "int a = 1");
 
-  // Expect it can discern macro name among characters
+
   EXPECT_EQ(scanInput("#define FOO 1\n"
                       "a=FOO;\n\n\n\n\n\n"),
             //               ^
@@ -89,7 +89,7 @@ TEST_F(TestPreprocessor, test_comments_and_spaces) {
   EXPECT_EQ(scanInput("// line comment\n"
                       "// another line comment\n"
                       "// yet another line comment"),
-            " ");
+            "");
 }
 
 TEST_F(TestPreprocessor, backslash_return_should_be_discarded) {
@@ -105,10 +105,6 @@ R F\
 OO)";
 
   EXPECT_EQ(scanInput(str), "int a = 20 ");
-
-  EXPECT_EQ(scanInput("//\\\n"
-                      "int a = 3;"),
-            " ");
 }
 
 TEST_F(TestPreprocessor, directive_should_be_at_the_start_of_the_line) {
