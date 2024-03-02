@@ -437,9 +437,7 @@ class RawBufferScanner : public ILookaheadScanner<RawBufferScanner<F>> {
   const char* _cursor;
 
  public:
-  RawBufferScanner(
-      const char* buffer, std::size_t bufferSize,
-      F& readUTF32)
+  RawBufferScanner(const char* buffer, std::size_t bufferSize, F& readUTF32)
       : _buffer(buffer),
         _bufferSize(bufferSize),
         _decodeChar(readUTF32),
@@ -774,11 +772,13 @@ PPCharacter PPImpl<F>::get() {
 
     if (const auto ptr = std::get_if<MacroExpansionResult::Ok>(&res)) {
       scanner.enterSection(ptr->sectionID);
-    } else if (const auto ptr = std::get_if<MacroExpansionResult::Fail>(&res)) {
+    } else {
       identScanner = std::make_unique<OffsetCharScanner<F>>(
           codeBuffer, recorder.offsets(), scanner.byteDecoder());
-    } else {
-      errOut.reportsError(std::get<Error>(std::move(res)));
+
+      if (const auto ptrToError = std::get_if<Error>(&res)) {
+        errOut.reportsError(std::move(*ptrToError));
+      }
     }
 
     return get();
@@ -913,7 +913,7 @@ std::string PPImpl<F>::expandFunctionLikeMacro(
   if (macroDef.body.empty()) return " ";
 
   RawBufferScanner<F> rbs(macroDef.body.c_str(), macroDef.body.size(),
-                       scanner.byteDecoder());
+                          scanner.byteDecoder());
   std::string output;
 
   while (!rbs.reachedEndOfInput()) {
