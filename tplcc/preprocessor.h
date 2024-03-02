@@ -143,6 +143,12 @@ bool lookaheadMatches(ILookaheadScanner<T>& scanner, const std::string& str) {
   return true;
 }
 
+template <std::derived_from<IBaseScanner> T>
+bool isSpaceOrStartOfComment(ILookaheadScanner<T>& scanner) {
+  return isSpace(scanner.peek()) || lookaheadMatches(scanner, "//") ||
+         lookaheadMatches(scanner, "/*");
+}
+
 class CharOffsetRecorder : public IBaseScanner {
   IOffsetScanner& _scanner;
   std::vector<CodeBuffer::Offset> _offsets;
@@ -253,7 +259,7 @@ class PPScanner : public ILookaheadScanner<PPLookaheadScanner<F>> {
     return codepoint;
   }
 
-  int peek() const { return PPLookaheadScanner(*this).peek(); }
+  int peek() const { return PPLookaheadScanner(*this).get(); }
 
   bool reachedEndOfInput() const {
     return stackOfSectionID.empty() && _offset == _codeBuffer.sectionEnd(0);
@@ -322,7 +328,7 @@ int PPLookaheadScanner<F>::peek() const {
 
 template <ByteDecoderConcept F>
 bool PPLookaheadScanner<F>::reachedEndOfInput() const {
-  return _indexOfStackItem == 0 && _offset == _pps._codeBuffer.sectionEnd(0);
+  return _indexOfStackItem == -1 && _offset == _pps._codeBuffer.sectionEnd(0);
 }
 
 template <ByteDecoderConcept F>
@@ -736,8 +742,7 @@ PPCharacter PPImpl<F>::get() {
   // A row of spaces and comments will be merge into one space. That means
   // whenever we read a space or a comment, we will skip as far as possible then
   // return a space to the caller.
-  if (isSpace(scanner.peek()) || lookaheadMatches(scanner, "/*") ||
-      lookaheadMatches(scanner, "//")) {
+  if (isSpaceOrStartOfComment(scanner)) {
     // Actually an error range will not start or end with a space or a comment,
     // so it doesn't matter what offset we return to the caller.
 
@@ -969,9 +974,9 @@ std::string PPImpl<F>::parseFunctionLikeMacroArgument(
       continue;
     }
 
-    if (isSpace(scanner.peek())) {
-      while (isSpace(scanner.peek())) scanner.get();
-      output += scanner.get();
+    if (isSpaceOrStartOfComment(scanner)) {
+      skipSpacesAndComments(scanner);
+      output += ' ';
       continue;
     }
 
