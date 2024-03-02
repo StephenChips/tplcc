@@ -268,6 +268,7 @@ class PPScanner : public ILookaheadScanner<PPLookaheadScanner<F>> {
   F& byteDecoder() { return _decodeChar; }
 
   void enterSection(CodeBuffer::SectionID id) {
+    if (_codeBuffer.sectionSize(id) == 0) return;
     stackOfSectionID.push_back(id);
     stackOfStoredOffsets.push_back(_offset);
     _offset = _codeBuffer.section(id);
