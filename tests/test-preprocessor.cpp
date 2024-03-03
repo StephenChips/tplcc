@@ -51,7 +51,6 @@ TEST_F(TestPreprocessor, define_object_macro) {
             //                    ^ both exit here.
             "int a = 1");
 
-
   EXPECT_EQ(scanInput("#define FOO 1\n"
                       "a=FOO;\n\n\n\n\n\n"),
             //               ^
@@ -259,8 +258,8 @@ TEST_F(TestPreprocessor, define_function_macro) {
             "DIV (3, 4)");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
-  const std::string macroEXPAND = "#define EXPAND(x) x";
-  EXPECT_EQ(scanInput(macroDIV + macroEMPTY + macroDEFER + macroEXPAND +
+  EXPECT_EQ(scanInput(macroDIV + macroEMPTY + macroDEFER +
+                      "#define EXPAND(x) x\n"
                       "EXPAND(DEFER(DIV)(3, 4))"),
             "((3) / (4))");
 

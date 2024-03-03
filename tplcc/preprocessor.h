@@ -128,14 +128,16 @@ struct IOffsetScanner : IBaseScanner {
   virtual ~IOffsetScanner() {}
 };
 
+/* Template type T should be one of subclass of IBaseScanner. */
 template <typename T>
-struct ILookaheadScanner : IOffsetScanner {
+struct IPreprocessorScanner : IOffsetScanner {
   virtual T lookaheadScanner() const = 0;
-  virtual ~ILookaheadScanner() {}
+  virtual ~IPreprocessorScanner() {}
 };
 
 template <std::derived_from<IBaseScanner> T>
-bool lookaheadMatches(ILookaheadScanner<T>& scanner, const std::string& str) {
+bool lookaheadMatches(IPreprocessorScanner<T>& scanner,
+                      const std::string& str) {
   auto lookaheadScanner = scanner.lookaheadScanner();
   for (const auto& ch : str) {
     if (lookaheadScanner.get() != ch) return false;
@@ -144,7 +146,7 @@ bool lookaheadMatches(ILookaheadScanner<T>& scanner, const std::string& str) {
 }
 
 template <std::derived_from<IBaseScanner> T>
-bool isSpaceOrStartOfComment(ILookaheadScanner<T>& scanner) {
+bool isSpaceOrStartOfComment(IPreprocessorScanner<T>& scanner) {
   return isSpace(scanner.peek()) || lookaheadMatches(scanner, "//") ||
          lookaheadMatches(scanner, "/*");
 }
@@ -207,7 +209,7 @@ template <ByteDecoderConcept F>
 class PPScanner;
 
 template <ByteDecoderConcept F>
-class PPLookaheadScanner : public IBaseScanner {
+class PPLookaheadScanner : public IPreprocessorScanner<PPLookaheadScanner<F>> {
   const PPScanner<F>& _pps;
 
   int _indexOfStackItem;
@@ -226,6 +228,9 @@ class PPLookaheadScanner : public IBaseScanner {
   bool reachedEndOfInput() const override;
   void refresh();
 
+  CodeBuffer::Offset offset() const { return _offset; }
+  PPLookaheadScanner lookaheadScanner() const { return *this; }
+
  private:
   void skipBackslashReturn();
   CodeBuffer::SectionID currentSectionID();
@@ -233,7 +238,7 @@ class PPLookaheadScanner : public IBaseScanner {
 };
 
 template <ByteDecoderConcept F>
-class PPScanner : public ILookaheadScanner<PPLookaheadScanner<F>> {
+class PPScanner : public IPreprocessorScanner<PPLookaheadScanner<F>> {
   friend class PPLookaheadScanner<F>;
 
   CodeBuffer& _codeBuffer;
@@ -376,7 +381,7 @@ class PPDirectiveLookaheadScanner : public IBaseScanner {
 
 template <ByteDecoderConcept F>
 class PPDirectiveScanner
-    : public ILookaheadScanner<PPDirectiveLookaheadScanner<F>> {
+    : public IPreprocessorScanner<PPDirectiveLookaheadScanner<F>> {
   friend class PPDirectiveLookaheadScanner<F>;
   PPScanner<F>& _scanner;
 
@@ -429,7 +434,7 @@ void PPDirectiveLookaheadScanner<F>::refresh() {
 class RawBufferLookaheadScanner : public IBaseScanner {};
 
 template <ByteDecoderConcept F>
-class RawBufferScanner : public ILookaheadScanner<RawBufferScanner<F>> {
+class RawBufferScanner : public IPreprocessorScanner<RawBufferScanner<F>> {
   const char* const _buffer;
   const std::size_t _bufferSize;
   F& _decodeChar;
@@ -510,10 +515,10 @@ class PPImpl {
   bool reachedEndOfCurrentSection() const;
 
   template <std::derived_from<IBaseScanner> T, typename U>
-  std::optional<Error> skipSpacesAndComments(ILookaheadScanner<T>& scanner,
+  std::optional<Error> skipSpacesAndComments(IPreprocessorScanner<T>& scanner,
                                              U&& isSpaceFn);
   template <std::derived_from<IBaseScanner> T>
-  std::optional<Error> skipSpacesAndComments(ILookaheadScanner<T>& scanner) {
+  std::optional<Error> skipSpacesAndComments(IPreprocessorScanner<T>& scanner) {
     return skipSpacesAndComments(scanner, ::isSpace);
   }
   void fastForwardToFirstOutputCharacter();
@@ -531,24 +536,24 @@ class PPImpl {
   template <std::derived_from<IBaseScanner> T>
   std::variant<std::vector<std::string>, Error>
   parseFunctionLikeMacroParameters(const std::string& macroName,
-                                   ILookaheadScanner<T>& scanner);
+                                   IPreprocessorScanner<T>& scanner);
 
   template <std::derived_from<IBaseScanner> T>
   MacroExpansionResult::Type tryExpandingMacro(
-      const std::string& macroName, ILookaheadScanner<T>& scanner,
+      const std::string& macroName, IPreprocessorScanner<T>& scanner,
       const MacroDefinition* const macroDefContext,
       const std::vector<std::string>* const argContext);
 
   template <std::derived_from<IBaseScanner> T>
   std::variant<std::vector<std::string>, Error>
   parseFunctionLikeMacroArgumentList(
-      ILookaheadScanner<T>& scanner, const MacroDefinition& macroDef,
+      IPreprocessorScanner<T>& scanner, const MacroDefinition& macroDef,
       const MacroDefinition* const macroDefContext,
       const std::vector<std::string>* const argContext);
 
   template <std::derived_from<IBaseScanner> T>
   std::string parseFunctionLikeMacroArgument(
-      ILookaheadScanner<T>& scanner,
+      IPreprocessorScanner<T>& scanner,
       const MacroDefinition* const macroDefContext,
       const std::vector<std::string>* const argContext);
 
@@ -560,7 +565,7 @@ class PPImpl {
 template <ByteDecoderConcept F>
 template <std::derived_from<IBaseScanner> T, typename U>
 std::optional<Error> PPImpl<F>::skipSpacesAndComments(
-    ILookaheadScanner<T>& scanner, U&& isSpaceFn) {
+    IPreprocessorScanner<T>& scanner, U&& isSpaceFn) {
   while (!scanner.reachedEndOfInput()) {
     if (isNewlineCharacter(scanner.peek())) {
       canParseDirectives = true;
@@ -792,7 +797,7 @@ PPCharacter PPImpl<F>::get() {
 template <ByteDecoderConcept F>
 template <std::derived_from<IBaseScanner> T>
 MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
-    const std::string& macroName, ILookaheadScanner<T>& scanner,
+    const std::string& macroName, IPreprocessorScanner<T>& scanner,
     const MacroDefinition* const macroDefContext,
     const std::vector<std::string>* const argContext) {
   assert(macroDefContext == nullptr && argContext == nullptr ||
@@ -802,15 +807,24 @@ MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
   const auto startOffset = scanner.offset();
 
   const auto macroDef = setOfMacroDefinitions.find(macroName);
-  if (macroDef == setOfMacroDefinitions.end() ||
-      macroDef->type == MacroType::FUNCTION_LIKE_MACRO &&
-          scanner.peek() != '(') {
+  if (macroDef == setOfMacroDefinitions.end()) {
     return MacroExpansionResult::Fail();
   }
 
   std::string key;
   std::vector<std::string> arguments;
   if (macroDef->type == MacroType::FUNCTION_LIKE_MACRO) {
+    auto lookaheadScanner = scanner.lookaheadScanner();
+    if (isSpaceOrStartOfComment(scanner)) {
+      skipSpacesAndComments(lookaheadScanner);
+    }
+
+    if (lookaheadScanner.peek() != '(') {
+      return MacroExpansionResult::Fail();
+    }
+
+    while (scanner.peek() != '(') scanner.get();
+    
     auto result = parseFunctionLikeMacroArgumentList(
         scanner, *macroDef, macroDefContext, argContext);
 
@@ -858,7 +872,7 @@ template <ByteDecoderConcept F>
 template <std::derived_from<IBaseScanner> T>
 std::variant<std::vector<std::string>, Error>
 PPImpl<F>::parseFunctionLikeMacroArgumentList(
-    ILookaheadScanner<T>& scanner, const MacroDefinition& macroDef,
+    IPreprocessorScanner<T>& scanner, const MacroDefinition& macroDef,
     const MacroDefinition* const macroDefContext,
     const std::vector<std::string>* const argContext) {
   std::vector<std::string> argumentList;
@@ -951,7 +965,8 @@ template <ByteDecoderConcept F>
 
 template <std::derived_from<IBaseScanner> T>
 std::string PPImpl<F>::parseFunctionLikeMacroArgument(
-    ILookaheadScanner<T>& scanner, const MacroDefinition* const macroDefContext,
+    IPreprocessorScanner<T>& scanner,
+    const MacroDefinition* const macroDefContext,
     const std::vector<std::string>* const argContext) {
   using namespace MacroExpansionResult;
 
@@ -1106,7 +1121,7 @@ template <ByteDecoderConcept F>
 template <std::derived_from<IBaseScanner> T>
 std::variant<std::vector<std::string>, Error>
 PPImpl<F>::parseFunctionLikeMacroParameters(const std::string& macroName,
-                                            ILookaheadScanner<T>& scanner) {
+                                            IPreprocessorScanner<T>& scanner) {
   std::vector<std::string> parameters;
   const auto parameterHasDefined =
       [&parameters](const std::string& identifier) {
