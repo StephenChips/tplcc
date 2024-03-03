@@ -496,6 +496,7 @@ class PPImpl {
   std::optional<PPCharacter> lookaheadBuffer;
 
   bool canParseDirectives;
+  bool justOuputedSpace = false;
 
  public:
   PPImpl(CodeBuffer& codeBuffer, IReportError& errOut, F&& readUTF32)
@@ -560,6 +561,12 @@ class PPImpl {
   std::string expandFunctionLikeMacro(
       const MacroDefinition& macroDef,
       const std::vector<std::string>& arguments);
+
+  bool sectionEquals(CodeBuffer::SectionID sectionID, const std::string& str) {
+    const auto sectionStart = codeBuffer.pos(codeBuffer.section(sectionID));
+    const auto sectionEnd = codeBuffer.pos(codeBuffer.section(sectionID));
+    return std::equal(sectionStart, sectionEnd, str.begin(), str.end());
+  }
 };
 
 template <ByteDecoderConcept F>
@@ -668,7 +675,7 @@ std::optional<std::size_t> findIndexOfParameter(
   }
 }
 
-std::string createFunctionLikeMacroCacheKey(
+inline std::string createFunctionLikeMacroCacheKey(
     const std::string& macroName, const std::vector<std::string>& arguments) {
   if (arguments.empty()) return macroName + "()";
 
@@ -682,12 +689,15 @@ std::string createFunctionLikeMacroCacheKey(
   return output + ")";
 }
 
-void skipAll(IBaseScanner& scanner) {
+template <typename T>
+  requires std::derived_from<std::decay_t<T>, IBaseScanner>
+void skipAll(T&& scanner) {
   while (scanner.get() != EOF)
     ;
 }
-
-std::string readAll(IBaseScanner& scanner) {
+template <typename T>
+  requires std::derived_from<std::decay_t<T>, IBaseScanner>
+std::string readAll(T&& scanner) {
   std::string content;
   for (auto ch = scanner.get(); ch != EOF; ch = scanner.get()) {
     content.push_back(ch);
@@ -735,10 +745,12 @@ PPCharacter PPImpl<F>::get() {
     if (identScanner->reachedEndOfInput()) {
       identScanner = nullptr;
     }
+    justOuputedSpace = false;
     return PPCharacter(ch, offset);
   }
 
   if (scanner.reachedEndOfInput()) {
+    justOuputedSpace = false;
     return PPCharacter::eof();
   }
 
@@ -755,9 +767,12 @@ PPCharacter PPImpl<F>::get() {
     if (scanner.peek() == '#' && canParseDirectives) {
       parseDirective();
       return get();
-    } else {
-      return PPCharacter(' ', offset);
     }
+
+    if (justOuputedSpace) return get();
+    
+    justOuputedSpace = true;
+    return PPCharacter(' ', offset);
   }
   if (scanner.peek() == '#' && canParseDirectives) {
     parseDirective();
@@ -771,24 +786,37 @@ PPCharacter PPImpl<F>::get() {
   canParseDirectives = false;
 
   if (isStartOfIdentifier(scanner.peek())) {
+    using namespace MacroExpansionResult;
     CharOffsetRecorder recorder(scanner);
     const auto identifier = parseIdentifier(recorder);
     auto res = tryExpandingMacro(identifier, scanner, nullptr, nullptr);
 
-    if (const auto ptr = std::get_if<MacroExpansionResult::Ok>(&res)) {
-      scanner.enterSection(ptr->sectionID);
-    } else {
+    if (const auto ptr = std::get_if<Error>(&res)) {
       identScanner = std::make_unique<OffsetCharScanner<F>>(
           codeBuffer, recorder.offsets(), scanner.byteDecoder());
-
-      if (const auto ptrToError = std::get_if<Error>(&res)) {
-        errOut.reportsError(std::move(*ptrToError));
-      }
+      errOut.reportsError(std::move(*ptr));
+      return get();
     }
+
+    if (const auto ptr = std::get_if<Fail>(&res)) {
+      identScanner = std::make_unique<OffsetCharScanner<F>>(
+          codeBuffer, recorder.offsets(), scanner.byteDecoder());
+      return get();
+    }
+
+    const auto ok = std::get<Ok>(res);
+
+    if (sectionEquals(ok.sectionID, " ")) {
+      if (justOuputedSpace) return get();
+      justOuputedSpace = true;
+    }
+
+    scanner.enterSection(ok.sectionID);
 
     return get();
   }
 
+  justOuputedSpace = false;
   const auto ch = scanner.get();
   const auto offset = scanner.offset();
   return PPCharacter(ch, offset);
@@ -824,7 +852,7 @@ MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
     }
 
     while (scanner.peek() != '(') scanner.get();
-    
+
     auto result = parseFunctionLikeMacroArgumentList(
         scanner, *macroDef, macroDefContext, argContext);
 
@@ -932,27 +960,12 @@ std::string PPImpl<F>::expandFunctionLikeMacro(
 
   while (!rbs.reachedEndOfInput()) {
     if (isStartOfIdentifier(rbs.peek())) {
-      const auto offsetBeforePasing = rbs.offset();
       const auto identifier = parseIdentifier(rbs);
       if (const auto index = findIndexOfParameter(macroDef, identifier)) {
         output += arguments[*index];
-        continue;
-      }
-
-      auto res = tryExpandingMacro(identifier, rbs, &macroDef, &arguments);
-
-      if (const auto ptr = std::get_if<Ok>(&res)) {
-        const auto sectionStart = codeBuffer.section(ptr->sectionID);
-        const auto strPos = codeBuffer.pos(sectionStart);
-        const auto strLen = codeBuffer.sectionSize(ptr->sectionID);
-        output.append(reinterpret_cast<const char*>(strPos), strLen);
-      } else if (const auto ptr = std::get_if<Fail>(&res)) {
-        output += identifier;
       } else {
-        errOut.reportsError(std::get<Error>(std::move(res)));
-        continue;
+        output += identifier;
       }
-
     } else {
       output += rbs.get();
     }
@@ -1014,14 +1027,20 @@ std::string PPImpl<F>::parseFunctionLikeMacroArgument(
         continue;
       }
 
-      if (const auto ptr = std::get_if<Ok>(&res)) {
-        const auto strOffset = codeBuffer.section(ptr->sectionID);
-        const auto strPos = codeBuffer.pos(strOffset);
-        const auto strLen = codeBuffer.sectionSize(ptr->sectionID);
-        output.append(reinterpret_cast<const char*>(strPos), strLen);
-      } else {  // Fail
+      if (const auto ptr = std::get_if<Fail>(&res)) {
         output.append(identifier);
+        continue;
       }
+
+      const auto ok = std::get<Ok>(res);
+      if (sectionEquals(ok.sectionID, " ")) {
+        continue;
+      }
+
+      const auto strOffset = codeBuffer.section(ok.sectionID);
+      const auto strPos = codeBuffer.pos(strOffset);
+      const auto strLen = codeBuffer.sectionSize(ok.sectionID);
+      output.append(reinterpret_cast<const char*>(strPos), strLen);
     } else {
       output += scanner.get();
     }
@@ -1041,7 +1060,7 @@ void PPImpl<F>::fastForwardToFirstOutputCharacter() {
 
 template <ByteDecoderConcept F>
 void PPImpl<F>::parseDirective() {
-  PPDirectiveScanner ppds{scanner};
+  PPDirectiveScanner<F> ppds{scanner};
 
   const auto startOffset = ppds.offset();
   Error error;
@@ -1063,6 +1082,7 @@ void PPImpl<F>::parseDirective() {
     std::vector<std::string> parameters;
 
     skipSpacesAndComments(ppds, isDirectiveSpace);
+
     if (!isStartOfIdentifier(ppds.peek())) {
       const auto startOffset = ppds.offset();
       ppds.get();
