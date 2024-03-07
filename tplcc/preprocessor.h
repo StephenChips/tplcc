@@ -539,9 +539,7 @@ class PPImpl {
   }
 
   MacroExpansionResult::Type tryExpandingMacro(
-      const std::string& macroName, PPScanner<F>& scanner,
-      const MacroDefinition* const macroDefContext,
-      const std::vector<std::string>* const argContext);
+      const std::string& macroName, PPScanner<F>& scanner);
 
   template <std::derived_from<IBaseScanner> T>
   std::variant<std::vector<std::string>, Error>
@@ -550,13 +548,10 @@ class PPImpl {
 
   std::variant<std::vector<std::string>, Error>
   parseFunctionLikeMacroArgumentList(
-      PPScanner<F>& scanner, const MacroDefinition& macroDef,
-      const MacroDefinition* const macroDefContext,
-      const std::vector<std::string>* const argContext);
+      PPScanner<F>& scanner, const MacroDefinition& macroDef);
 
   std::string parseFunctionLikeMacroArgument(
-      PPScanner<F>& scanner, const MacroDefinition* const macroDefContext,
-      const std::vector<std::string>* const argContext);
+      PPScanner<F>& scanner);
 
   std::string expandFunctionLikeMacro(
       const MacroDefinition& macroDef,
@@ -790,7 +785,7 @@ PPCharacter PPImpl<F>::get() {
     using namespace MacroExpansionResult;
     CharOffsetRecorder recorder(scanner);
     const auto identifier = parseIdentifier(recorder);
-    auto res = tryExpandingMacro(identifier, scanner, nullptr, nullptr);
+    auto res = tryExpandingMacro(identifier, scanner);
 
     if (const auto ptr = std::get_if<Error>(&res)) {
       identScanner = std::make_unique<OffsetCharScanner<F>>(
@@ -825,13 +820,7 @@ PPCharacter PPImpl<F>::get() {
 
 template <ByteDecoderConcept F>
 MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
-    const std::string& macroName, PPScanner<F>& scanner,
-    const MacroDefinition* const macroDefContext,
-    const std::vector<std::string>* const argContext) {
-  assert(macroDefContext == nullptr && argContext == nullptr ||
-         macroDefContext != nullptr && argContext != nullptr &&
-             macroDefContext->parameters.size() == argContext->size());
-
+    const std::string& macroName, PPScanner<F>& scanner) {
   const auto startOffset = scanner.offset();
 
   const auto macroDef = setOfMacroDefinitions.find(macroName);
@@ -854,7 +843,7 @@ MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
     while (scanner.peek() != '(') scanner.get();
 
     auto result = parseFunctionLikeMacroArgumentList(
-        scanner, *macroDef, macroDefContext, argContext);
+        scanner, *macroDef);
 
     if (const auto error = std::get_if<Error>(&result)) {
       return std::move(*error);
@@ -899,9 +888,7 @@ MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
 template <ByteDecoderConcept F>
 std::variant<std::vector<std::string>, Error>
 PPImpl<F>::parseFunctionLikeMacroArgumentList(
-    PPScanner<F>& scanner, const MacroDefinition& macroDef,
-    const MacroDefinition* const macroDefContext,
-    const std::vector<std::string>* const argContext) {
+    PPScanner<F>& scanner, const MacroDefinition& macroDef) {
   std::vector<std::string> argumentList;
 
   scanner.get();  // skip the beginning '('
@@ -912,14 +899,14 @@ PPImpl<F>::parseFunctionLikeMacroArgumentList(
   }
 
   std::string arg =
-      parseFunctionLikeMacroArgument(scanner, macroDefContext, argContext);
+      parseFunctionLikeMacroArgument(scanner);
   argumentList.push_back(std::move(arg));
 
   while (scanner.peek() != ')') {
     if (scanner.peek() == ',') {
       scanner.get();
       auto args =
-          parseFunctionLikeMacroArgument(scanner, macroDefContext, argContext);
+          parseFunctionLikeMacroArgument(scanner);
       argumentList.push_back(std::move(args));
       continue;
     }
@@ -975,20 +962,11 @@ std::string PPImpl<F>::expandFunctionLikeMacro(
 
 template <ByteDecoderConcept F>
 std::string PPImpl<F>::parseFunctionLikeMacroArgument(
-    PPScanner<F>& scanner, const MacroDefinition* const macroDefContext,
-    const std::vector<std::string>* const argContext) {
+    PPScanner<F>& scanner) {
   using namespace MacroExpansionResult;
 
   std::string output;
   int parenthesisLevel = 0;
-
-  // Since macro can't be expanded recursively, once we find the current
-  // section ID is the base section id, we know the scanner has returned
-  // to the base section from a sub-expansion.
-  //
-  // There is myth that macro can be expanded recursively with some tricks.
-  // If so, the logic may be not applicable anymore. However I assumes this
-  // case isn't rather common and it is ignored for now.
 
   auto idOfBaseSection = scanner.currentSectionID();
   auto sectionStackSize = scanner.sectionStack().size();
@@ -1028,15 +1006,8 @@ std::string PPImpl<F>::parseFunctionLikeMacroArgument(
       const auto startOffset = scanner.offset();
       const auto identifier = parseIdentifier(scanner);
 
-      if (macroDefContext) {
-        if (auto index = findIndexOfParameter(*macroDefContext, identifier)) {
-          output += (*argContext)[*index];
-          continue;
-        }
-      }
-
       auto res =
-          tryExpandingMacro(identifier, scanner, macroDefContext, argContext);
+          tryExpandingMacro(identifier, scanner);
 
       if (const auto ptr = std::get_if<Error>(&res)) {
         errOut.reportsError(std::get<Error>(std::move(res)));
