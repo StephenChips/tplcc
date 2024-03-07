@@ -218,7 +218,7 @@ class PPLookaheadScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
  public:
   PPLookaheadScanner(const PPScanner<F>& pps)
       : _pps(pps),
-        _indexOfStackItem(pps.stackOfSectionID.size() - 1),
+        _indexOfStackItem(pps._sectionStack.size() - 1),
         _offset(pps._offset) {
     skipBackslashReturn();
   }
@@ -239,14 +239,18 @@ class PPLookaheadScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
 
 template <ByteDecoderConcept F>
 class PPScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
+  struct SectionStackItem {
+    CodeBuffer::SectionID sectionID;
+    CodeBuffer::Offset returnOffset;
+  };
+
   friend class PPLookaheadScanner<F>;
 
   CodeBuffer& _codeBuffer;
   CodeBuffer::Offset _offset = 0;
   F& _decodeChar;
 
-  std::vector<CodeBuffer::SectionID> stackOfSectionID;
-  std::vector<CodeBuffer::Offset> stackOfStoredOffsets;
+  std::vector<SectionStackItem> _sectionStack;
 
  public:
   PPScanner(CodeBuffer& codeBuffer, F& readUTF32)
@@ -258,7 +262,7 @@ class PPScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
     const auto [codepoint, codelen] = _decodeChar(_codeBuffer.pos(_offset));
     _offset += codelen;
     if (currentSectionID() == 0) skipBackslashReturn();
-    while (!stackOfSectionID.empty() && _offset == currentSectionEnd()) {
+    while (!_sectionStack.empty() && _offset == currentSectionEnd()) {
       exitSection();
     }
     return codepoint;
@@ -267,7 +271,7 @@ class PPScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
   int peek() const { return PPLookaheadScanner(*this).get(); }
 
   bool reachedEndOfInput() const {
-    return stackOfSectionID.empty() && _offset == _codeBuffer.sectionEnd(0);
+    return _sectionStack.empty() && _offset == _codeBuffer.sectionEnd(0);
   }
 
   PPLookaheadScanner<F> lookaheadScanner() const {
@@ -280,24 +284,24 @@ class PPScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
 
   void enterSection(CodeBuffer::SectionID id) {
     if (_codeBuffer.sectionSize(id) == 0) return;
-    stackOfSectionID.push_back(id);
-    stackOfStoredOffsets.push_back(_offset);
+    _sectionStack.push_back({id, _offset});
     _offset = _codeBuffer.section(id);
   }
 
   CodeBuffer::SectionID currentSectionID() {
-    return stackOfSectionID.empty() ? 0 : stackOfSectionID.back();
+    return _sectionStack.empty() ? 0 : _sectionStack.back().sectionID;
   }
 
   CodeBuffer::Offset currentSectionEnd() {
     return _codeBuffer.sectionEnd(currentSectionID());
   }
 
+  const std::vector<SectionStackItem>& sectionStack() const { return _sectionStack; }
+
  private:
   void exitSection() {
-    stackOfSectionID.pop_back();
-    _offset = stackOfStoredOffsets.back();
-    stackOfStoredOffsets.pop_back();
+    _offset = _sectionStack.back().returnOffset;
+    _sectionStack.pop_back();
   }
 
   void skipBackslashReturn() {
@@ -319,7 +323,7 @@ int PPLookaheadScanner<F>::get() {
   _offset += codelen;
   if (currentSectionID() == 0) skipBackslashReturn();
   while (_indexOfStackItem >= 0 && _offset == currentSectionEnd()) {
-    _offset = _pps.stackOfStoredOffsets[_indexOfStackItem];
+    _offset = _pps._sectionStack[_indexOfStackItem].returnOffset;
     _indexOfStackItem--;
   }
   return codepoint;
@@ -344,7 +348,7 @@ void PPLookaheadScanner<F>::refresh() {
 
 template <ByteDecoderConcept F>
 CodeBuffer::SectionID PPLookaheadScanner<F>::currentSectionID() {
-  return _indexOfStackItem == -1 ? 0 : _pps.stackOfSectionID[_indexOfStackItem];
+  return _indexOfStackItem == -1 ? 0 : _pps._sectionStack[_indexOfStackItem].sectionID;
 }
 
 template <ByteDecoderConcept F>
@@ -558,7 +562,8 @@ class PPImpl {
       const MacroDefinition& macroDef,
       const std::vector<std::string>& arguments);
 
-  bool sectionContentEquals(CodeBuffer::SectionID sectionID, const std::string& str) {
+  bool sectionContentEquals(CodeBuffer::SectionID sectionID,
+                            const std::string& str) {
     const auto sectionStart = codeBuffer.pos(codeBuffer.section(sectionID));
     const auto sectionEnd = codeBuffer.pos(codeBuffer.section(sectionID));
     return std::equal(sectionStart, sectionEnd, str.begin(), str.end());

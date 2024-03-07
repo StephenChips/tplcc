@@ -167,6 +167,8 @@ TEST_F(TestPreprocessor, define_function_macro) {
   // EXPECT_EQ(scanInput("#define FOO(x) BAR x\n"
   //                     "FOO(FOO)(2)"),
   //           "BAR FOO(2)");
+  // EXPECT_EQ(scanInput(macroID + "ID(ID)(3)"),
+  //          "ID(3)");
 
   /* The simplest situation */
   EXPECT_EQ(scanInput(macroDIV + "DIV(4, 3)"), "((4) / (3))");
@@ -222,8 +224,6 @@ TEST_F(TestPreprocessor, define_function_macro) {
    * follow the expanded-text. A new expansion will happen. */
   EXPECT_EQ(scanInput(macroID + macroDIV + "ID(DIV)(3, 4)"), "((3) / (4))");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
-  EXPECT_EQ(scanInput(macroID + "ID(ID)(3)"),
-            "ID(3)");  // corner case: painted-blue
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
   EXPECT_EQ(scanInput(macroDIV + "#define X(a) a\n"
                                  "#define FOO X\n"
@@ -231,23 +231,21 @@ TEST_F(TestPreprocessor, define_function_macro) {
             "3");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
-  // EXPECT_EQ(scanInput(macroDIV +
-  //               "#define V(a) DIV(a, \n"
-  //               "#define B 4\n"
-  //               "V(3) B)"),
-  //           "((3) / (4)))");
+  EXPECT_EQ(scanInput(macroDIV + "#define V(a) DIV(a, \n"
+                                 "#define B 4\n"
+                                 "V(3) B)"),
+            "((3) / (4)))");
 
-  // EXPECT_EQ(scanInput(macroDIV +
-  //               "#define V(a) DIV(a, \n"
-  //               "#define B 4)\n"
-  //               "V(3) B"),
-  //           "DIV B");
-  // EXPECT_EQ(errOut->listOfErrors.empty(), true);
-  // if (errOut->listOfErrors.size() == 1) {
-  //   EXPECT_EQ(errOut->listOfErrors[0].message(),
-  //             "unterminated argument list invoking macro \"DIV\"");
-  // }
-  // EXPECT_EQ(errOut->listOfErrors.empty(), true);
+  EXPECT_EQ(scanInput(macroDIV + "#define V(a) DIV(a, \n"
+                                 "#define B 4)\n"
+                                 "V(3) B"),
+            "DIV B");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
+              "unterminated argument list invoking macro \"DIV\"");
+  }
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
   EXPECT_EQ(scanInput(macroID + "ID((3,4))"), "(3,4)");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
