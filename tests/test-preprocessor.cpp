@@ -247,6 +247,28 @@ TEST_F(TestPreprocessor, define_function_macro) {
   }
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
+  EXPECT_EQ(scanInput("#define LP (\n"
+                      "#define RP )\n"
+                      "#define U(a) a\n"
+                      "U LP a RP"),
+            "U ( a )");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  EXPECT_EQ(scanInput("#define A 3, 4\n"
+                      "#define B(a) a\n"
+                      "B(A)"),
+            "3, 4");
+
+  EXPECT_EQ(scanInput("#define A 3,4\n"
+                      "#define B(a, b) [a, b]\n"
+                      "B(A)"),
+            "B");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0].message(),
+              "The macro \"B\" requires 2 argument(s), but got 1.");
+  }
+
   EXPECT_EQ(scanInput(macroID + "ID((3,4))"), "(3,4)");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
