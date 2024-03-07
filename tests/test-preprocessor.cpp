@@ -234,18 +234,17 @@ TEST_F(TestPreprocessor, define_function_macro) {
   EXPECT_EQ(scanInput(macroDIV + "#define V(a) DIV(a, \n"
                                  "#define B 4\n"
                                  "V(3) B)"),
-            "((3) / (4)))");
+            "((3) / (4))");
 
   EXPECT_EQ(scanInput(macroDIV + "#define V(a) DIV(a, \n"
                                  "#define B 4)\n"
                                  "V(3) B"),
-            "DIV B");
-  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+            "DIV");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
   if (errOut->listOfErrors.size() == 1) {
     EXPECT_EQ(errOut->listOfErrors[0].message(),
               "unterminated argument list invoking macro \"DIV\"");
   }
-  EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
   EXPECT_EQ(scanInput("#define LP (\n"
                       "#define RP )\n"

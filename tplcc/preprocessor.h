@@ -991,17 +991,20 @@ std::string PPImpl<F>::parseFunctionLikeMacroArgument(
   // case isn't rather common and it is ignored for now.
 
   auto idOfBaseSection = scanner.currentSectionID();
-  const auto isInBaseSection = [&]() {
-    return scanner.currentSectionID() == idOfBaseSection;
-  };
+  auto sectionStackSize = scanner.sectionStack().size();
 
   // skip leading spaces
   while (isSpace(scanner.peek())) scanner.get();
 
   for (;;) {
+    if (sectionStackSize > scanner.sectionStack().size()) {
+      idOfBaseSection = scanner.currentSectionID();
+      sectionStackSize = scanner.sectionStack().size();
+    }
+
     if (scanner.reachedEndOfInput()) break;
 
-    if (isInBaseSection()) {
+    if (scanner.currentSectionID() == idOfBaseSection) {
       if (parenthesisLevel == 0) {
         if (scanner.peek() == ',') break;
         if (scanner.peek() == ')') break;
