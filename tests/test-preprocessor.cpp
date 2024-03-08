@@ -154,21 +154,23 @@ TEST_F(TestPreprocessor, define_function_macro) {
   const std::string macroMCALL{"#define MCALL(func, x) func(x)\n"};
 
   /* painted blue */
-  // EXPECT_EQ(scanInput("#define R R"), "R");
-  // EXPECT_EQ(scanInput("#define R() R()"), "R()");
-  // EXPECT_EQ(
-  //     scanInput("#define R() V()\n"
-  //               "#define V() R()\n"
-  //                     "R()"),
-  //           "R()");
-  // EXPECT_EQ(scanInput("#define R(a) a()\n"
-  //                     "R(R)"),
-  //           "R()");
-  // EXPECT_EQ(scanInput("#define FOO(x) BAR x\n"
-  //                     "FOO(FOO)(2)"),
-  //           "BAR FOO(2)");
-  // EXPECT_EQ(scanInput(macroID + "ID(ID)(3)"),
-  //          "ID(3)");
+  EXPECT_EQ(scanInput("#define R R\n"
+                      "R"),
+            "R");
+  EXPECT_EQ(scanInput("#define R() R()\n"
+                      "R()"),
+            "R()");
+  EXPECT_EQ(scanInput("#define R() V()\n"
+                      "#define V() R()\n"
+                      "R()"),
+            "R()");
+  EXPECT_EQ(scanInput("#define R(a) a()\n"
+                      "R(R)"),
+            "R()");
+  EXPECT_EQ(scanInput("#define FOO(x) BAR x\n"
+                      "FOO(FOO)(2)"),
+            "BAR FOO(2)");
+  EXPECT_EQ(scanInput(macroID + "ID(ID)(3)"), "ID(3)");
 
   /* The simplest situation */
   EXPECT_EQ(scanInput(macroDIV + "DIV(4, 3)"), "((4) / (3))");
