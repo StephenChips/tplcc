@@ -229,11 +229,12 @@ class PPLookaheadScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
 
   CodeBuffer::Offset offset() const { return _offset; }
   PPLookaheadScanner lookaheadScanner() const { return *this; }
+  CodeBuffer::SectionID currentSectionID() const;
+  CodeBuffer::Offset currentSectionEnd() const;
+  void exitFullyScannedSections();
 
  private:
   void skipBackslashReturn();
-  CodeBuffer::SectionID currentSectionID() const;
-  CodeBuffer::Offset currentSectionEnd() const;
 };
 
 template <ByteDecoderConcept F>
@@ -257,9 +258,7 @@ class PPScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
 
   int get() {
     if (reachedEndOfInput()) return EOF;
-    while (!_sectionStack.empty() && _offset == currentSectionEnd()) {
-      exitSection();
-    }
+    exitFullyScannedSections();
     const auto charOffset = _offset;
     const auto [codepoint, codelen] = _decodeChar(_codeBuffer.pos(_offset));
     _offset += codelen;
@@ -297,6 +296,12 @@ class PPScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
     return _sectionStack;
   }
 
+  void exitFullyScannedSections() {
+    while (!_sectionStack.empty() && _offset == currentSectionEnd()) {
+      exitSection();
+    }
+  }
+
  private:
   void exitSection() const {
     _offset = _sectionStack.back().returnOffset;
@@ -317,10 +322,7 @@ class PPScanner : public IOffsetLookaheadable<PPLookaheadScanner<F>> {
 template <ByteDecoderConcept F>
 int PPLookaheadScanner<F>::get() {
   if (reachedEndOfInput()) return EOF;
-  while (_indexOfStackItem >= 0 && _offset == currentSectionEnd()) {
-    _offset = _pps._sectionStack[_indexOfStackItem].returnOffset;
-    _indexOfStackItem--;
-  }
+  exitFullyScannedSections();
   const auto [codepoint, codelen] =
       _pps._decodeChar(_pps._codeBuffer.pos(_offset));
   _offset += codelen;
@@ -368,6 +370,14 @@ void PPLookaheadScanner<F>::skipBackslashReturn() {
     const auto [ch2, l2] = _pps._decodeChar(_pps._codeBuffer.pos(_offset + l1));
     if (ch2 != '\n') return;
     _offset += l1 + l2;
+  }
+}
+
+template <ByteDecoderConcept F>
+void PPLookaheadScanner<F>::exitFullyScannedSections() {
+  while (_indexOfStackItem >= 0 && _offset == currentSectionEnd()) {
+    _offset = _pps._sectionStack[_indexOfStackItem].returnOffset;
+    _indexOfStackItem--;
   }
 }
 
@@ -973,41 +983,31 @@ std::string PPImpl<F>::parseFunctionLikeMacroArgument(PPScanner<F>& scanner) {
   std::string output;
   int parenthesisLevel = 0;
 
-  auto idOfBaseSection = scanner.currentSectionID();
+  auto baseSectionID = scanner.currentSectionID();
   auto sectionStackSize = scanner.sectionStack().size();
 
   // skip leading spaces
   while (isSpace(scanner.peek())) scanner.get();
 
   for (;;) {
-    if (sectionStackSize > scanner.sectionStack().size()) {
-      idOfBaseSection = scanner.currentSectionID();
-      sectionStackSize = scanner.sectionStack().size();
-    }
+    scanner.exitFullyScannedSections();
 
     if (scanner.reachedEndOfInput()) break;
 
-    if (scanner.currentSectionID() == idOfBaseSection) {
-      if (parenthesisLevel == 0) {
-        if (scanner.peek() == ',') break;
-        if (scanner.peek() == ')') break;
-      }
+    if (scanner.sectionStack().size() < sectionStackSize) {
+      baseSectionID = scanner.currentSectionID();
+      sectionStackSize = scanner.sectionStack().size();
+    }
 
-      if (scanner.peek() == '(' || scanner.peek() == ')') {
-        if (scanner.peek() == '(') parenthesisLevel++;
-        if (scanner.peek() == ')') parenthesisLevel--;
-        output += scanner.get();
-        continue;
-      }
+    if (scanner.currentSectionID() == baseSectionID && parenthesisLevel == 0) {
+      if (scanner.peek() == ',') break;
+      if (scanner.peek() == ')') break;
     }
 
     if (isSpaceOrStartOfComment(scanner)) {
       skipSpacesAndComments(scanner);
       output += ' ';
-      continue;
-    }
-
-    if (isStartOfIdentifier(scanner.peek())) {
+    } else if (isStartOfIdentifier(scanner.peek())) {
       const auto startOffset = scanner.offset();
       const auto identifier = parseIdentifier(scanner);
 
@@ -1015,20 +1015,17 @@ std::string PPImpl<F>::parseFunctionLikeMacroArgument(PPScanner<F>& scanner) {
 
       if (const auto ptr = std::get_if<Error>(&res)) {
         errOut.reportsError(std::get<Error>(std::move(res)));
-        continue;
-      }
-      if (const auto ptr = std::get_if<Fail>(&res)) {
+      } else if (const auto ptr = std::get_if<Fail>(&res)) {
         output.append(identifier);
-        continue;
+      } else {
+        const auto ok = std::get<Ok>(res);
+        if (!sectionContentEquals(ok.sectionID, " ")) {
+          scanner.enterSection(ok.sectionID);
+        }
       }
-
-      const auto ok = std::get<Ok>(res);
-      if (sectionContentEquals(ok.sectionID, " ")) {
-        continue;
-      }
-
-      scanner.enterSection(ok.sectionID);
     } else {
+      if (scanner.peek() == '(') parenthesisLevel++;
+      if (scanner.peek() == ')') parenthesisLevel--;
       output += scanner.get();
     }
   }
@@ -1211,9 +1208,8 @@ template <ByteDecoderConcept F>
 bool PPImpl<F>::isMacroPaintedBlue(const std::string& macroName) const {
   const auto& sectionStack = scanner.sectionStack();
   for (const auto& stackItem : sectionStack) {
-    if (mapOfSectionIDToMacroName.find(stackItem.sectionID)->second == macroName) {
-      return true;
-    }
+    const auto it = mapOfSectionIDToMacroName.find(stackItem.sectionID);
+    if (it->second == macroName) return true;
   }
   return false;
 }
