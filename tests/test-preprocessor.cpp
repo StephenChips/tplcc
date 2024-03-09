@@ -360,9 +360,137 @@ TEST_F(TestPreprocessor, define_function_macro) {
               "The macro \"DIV\" requires 2 argument(s), but got 3.");
   }
 
+  // # operator
+
+  EXPECT_EQ(scanInput("#define A(a) #a\n"
+                      "A(a)"),
+            "\"a\"");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A(a) #a\n"
+                      "A()"),
+            "\"\"");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A() #a\n"
+                      "A()"),
+            "A()");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(
+        errOut->listOfErrors[0],
+        Error({12, 14}, "Operator # is not followed by a macro parameter.",
+              "'a' is not a parameter"));
+  }
+
+  EXPECT_EQ(scanInput("#define A #a"), "#a");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+
+  // ## operator
+
+  EXPECT_EQ(scanInput("#define A(a, b) a ## b\n"
+                      "A(c, d)\n"),
+            "cd");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A(a, b, c) a ## b ## c\n"
+                      "A(x,y,z)"),
+            "xyz");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A(a, b) a ## b\n"
+                      "A(,)"),
+            " ");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A(a, b) a ## b\n"
+                      "A(, uvu)"),
+            "uvu");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A(a, b) a ## b\n"
+                      "A(uvu, )"),
+            "uvu");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A(a) a ## @\n"
+                      "A()"),
+            "@");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A(a, b) a ## b\n"
+                      "A(uvu, @)"),
+            "uvu@");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A # ## #\n"
+                      "A"),
+            "##");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+  EXPECT_EQ(scanInput("#define A D ## ## 3\n"
+                      "A"),
+            "D3");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+
+  // Quote from C99 spec, 6.10.3.3.4.:
+  //   
+  //   In other words, expanding hash_hash produces a new token, consisting of two adjacent sharp signs, but
+  //   this new token is not the ## operator
+  //
+  // Following example is from the same section.
+
+  EXPECT_EQ(scanInput("#define hash_hash # ## #\n"
+                      "#define mkstr(a) #a\n"
+                      "#define in_between(a) mkstr(a)\n"
+                      "#define join(c, d) in_between(c hash_hash d)\n"
+                      "char p[] = join(x, y);"),
+            "char p[] = \"x ## y\"");
+  EXPECT_TRUE(errOut->listOfErrors.empty());
+
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0],
+              Error({25, 28},
+                    "Combining \"uvu\" and \"@\" forms \"uvu@\", which "
+                    "isn't a valid preprocessing token.",
+                    ""));
+  }
+
+  EXPECT_EQ(scanInput("#define A() a ## @\n"
+                      "A()"),
+            "a@");
+  EXPECT_EQ(errOut->listOfErrors.size(), 1);
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0],
+              Error({12, 13},
+                    "Combining \"a\" and \"@\" forms \"a@\", which "
+                    "isn't a valid preprocessing token.",
+                    ""));
+  }
+
+  EXPECT_EQ(scanInput("#define A() ## a\n"
+                      "A()"),
+            "A()");
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0],
+              Error({12, 13},
+                    "The ## operator cannot appear at the beginning of a macro "
+                    "replacement list."));
+  }
+
+  EXPECT_EQ(scanInput("#define A() a ##\n"
+                      "A()"),
+            "A()");
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0],
+              Error({12, 13},
+                    "The ## operator cannot appear at the end of a macro "
+                    "replacement list."));
+  }
+
+  EXPECT_EQ(scanInput("#define A() ##\n"
+                      "A()"),
+            "A()");
+  if (errOut->listOfErrors.size() == 1) {
+    EXPECT_EQ(errOut->listOfErrors[0],
+              Error({12, 13},
+                    "The ## operator cannot appear at the beginning of a macro "
+                    "replacement list."));
+  }
+
   // TODO __VA_ARGS__
-  // TODO paint-blue
-  // TODO #/## operator
+  // TODO #include
   // TODO #if #ifdef #ifndef
   // TODO #pragma #line
 }
