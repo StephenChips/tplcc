@@ -750,6 +750,27 @@ bool isFirstCharOfIdentifier(const char ch) {
 
 template <ByteDecoderConcept F>
 PPCharacter PPImpl<F>::get() {
+  /**
+   * An identifier is a string such as a variable or function name. The different
+   * between a preprocessor identifier and a lexer/parser identifier is negiligible.
+   * 
+   * The preprocessor needs to parse identifiers because of macros. Every macro name
+   * is a identifier, so every time we see a character that can starts an identifier,
+   * we need to scan through it and check if it's a macro name. A `identScanner` will
+   * be created as we start scaning the identifier, which records each character that
+   * have been scanned. As we finished, if we confirmed the identifier IS a macro, we will
+   * discard it and start expanding the macro, otherwiswe will keep it and let it output
+   * the character it recorded.
+   * 
+   * For error reporting, the `identScanner` is a `OffsetCharScanner`, which stores the offset
+   * of each character in the identifiers. So when an error happened, the error handling
+   * code can both print the identifier and its the location. If we store the identifier
+   * string itself, this information will be lost.
+   * 
+   * Note: The design is somewhat non-obvious. e.g. The role of `identScanner` is not
+   * immediately clear from its name alone. Hope there may be a better, more self-explanatory
+   * design with fewer intermidate concepts.
+   */
   if (identScanner) {
     const auto offset = identScanner->offset();
     const auto ch = identScanner->get();
