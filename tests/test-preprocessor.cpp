@@ -93,6 +93,17 @@ TEST_F(TestPreprocessor, test_comments_and_spaces) {
             "");
 }
 
+/**
+ * Note on line Splicing `backslash-newline`:
+ *
+ * While it is commonly associated with multiline macro definitions, a
+ * `backslash-newline` sequence (a '\' followed by a newline: a '\r', '\n' or
+ * '\r\n') can appear anywhere in the source code, and it is skipped. It is not
+ * syntax exclusive to #define directive for delimiting lines within a macro
+ * body, contrary to common misconception. Therefore you find logic within
+ * parsing #define directives that handle `backslash-newline` sequences, because
+ * they are handled at an earlier stage.
+ */
 TEST_F(TestPreprocessor, backslash_return_should_be_discarded) {
   const auto str = R"(\
 #define FOO a =\
@@ -223,9 +234,12 @@ TEST_F(TestPreprocessor, define_function_macro) {
   EXPECT_EQ(scanInput(macroID + macroMCALL + "MCALL(ID, 123456)"), "123456");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
-  /* An expanded-text is treated as if they were source input. If it's some
-   * tokens in the expanded text forms a macro call with some other tokens
-   * follow the expanded-text. A new expansion will happen. */
+  /* Expanded text is treated as if it were source input. If some tokens
+   * in an expanded text and subsequent tokens in the source forms a valid
+   * macro call, they will be expanded together.
+   *
+   * See ISO C99/C11 §6.10.3.4 "Rescanning and further replacement."
+   */
   EXPECT_EQ(scanInput(macroID + macroDIV + "ID(DIV)(3, 4)"), "((3) / (4))");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
@@ -294,11 +308,58 @@ TEST_F(TestPreprocessor, define_function_macro) {
             "(((a), (b)), (), ())");
   EXPECT_EQ(errOut->listOfErrors.empty(), true);
 
+  EXPECT_EQ(scanInput(macroID + "ID(\\)ID(\\)\n"), "\\\\ ");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  EXPECT_EQ(scanInput("#define A(a) a\n"
+                      "A(#define B(b) b)\n"
+                      "B(123)"),
+            " #define B(b) b\n"
+            "B(123)");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  EXPECT_EQ(scanInput("#define A(a) a\n"
+                      "A((,))"),
+            "(,)");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
+  /** pp-numbers */
+  EXPECT_EQ(scanInput("#define FOO 3\n"
+                      "134FOO 1e+FOO 0x1FOO 0p1FOO1"),
+            "134FOO 1e+FOO 0x1FOO 0p1FOO1");
+  EXPECT_EQ(errOut->listOfErrors.empty(), true);
+
   /* Invalid cases */
 
-  // If an function-like macro call is invalid, for example, the number of
-  // arguments isn't equal to the number of parameter, the whole expression
-  // will not be expanded and output the invalid expression instead.
+  /**
+   * According to ISO C99 §6.10.3p2, redefining a macro is not permitted
+   * unless it is identical to the previouis one, In practice GCC and Clang
+   * gives a warning rather than an error for macro redefinition.
+   */
+  EXPECT_EQ(scanInput("#define O1 abc\n"
+                      "#define O1 abc\n"
+
+                      // Error
+                      "#define O2 abc\n"
+                      "#define O2 abcdef\n"
+
+                      "#define A(x) x\n"
+                      "#define A(x) x\n"
+
+                      // Error
+                      "#define B(y) y\n"
+                      "#define B(y) y y\n"
+
+                      // Error
+                      "#define C(z)\n"
+                      "#define C(y, z)\n"),
+            "");
+  EXPECT_EQ(errOut->listOfErrors.size(), 3);
+  if (errOut->listOfErrors.size() == 3) {
+    EXPECT_EQ(errOut->listOfErrors[0].message(), "Macro \"O2\" redefined.");
+    EXPECT_EQ(errOut->listOfErrors[1].message(), "Macro \"B\" redefined.");
+    EXPECT_EQ(errOut->listOfErrors[2].message(), "Macro \"C\" redefined.");
+  }
 
   EXPECT_EQ(scanInput(macroDIV + "DIV(a) DIV(a,b,c)"), "DIV DIV");
   EXPECT_EQ(errOut->listOfErrors.size(), 2);
@@ -308,6 +369,16 @@ TEST_F(TestPreprocessor, define_function_macro) {
     EXPECT_EQ(errOut->listOfErrors[1].message(),
               "The macro \"DIV\" requires 2 argument(s), but got 3.");
   }
+
+  EXPECT_EQ(scanInput("#define A(a) a\n"
+                      "A(+)A(+)"),
+            "+ +");
+  EXPECT_EQ(errOut->listOfErrors.size(), 0);
+
+  EXPECT_EQ(scanInput("#define A(a) a\n"
+                      "A(+)A(-)"),
+            "+-");
+  EXPECT_EQ(errOut->listOfErrors.size(), 0);
 
   EXPECT_EQ(scanInput("#define F(a, a) a\n"
                       "F(1, 2) A"),
@@ -426,9 +497,9 @@ TEST_F(TestPreprocessor, define_function_macro) {
   EXPECT_TRUE(errOut->listOfErrors.empty());
 
   // Quote from C99 spec, 6.10.3.3.4.:
-  //   
-  //   In other words, expanding hash_hash produces a new token, consisting of two adjacent sharp signs, but
-  //   this new token is not the ## operator
+  //
+  //   In other words, expanding hash_hash produces a new token, consisting of
+  //   two adjacent sharp signs, but this new token is not the ## operator
   //
   // Following example is from the same section.
 
@@ -490,6 +561,8 @@ TEST_F(TestPreprocessor, define_function_macro) {
                     "The ## operator cannot appear at the beginning of a macro "
                     "replacement list."));
   }
+
+  /* punctuators */
 
   // TODO __VA_ARGS__
   // TODO #include

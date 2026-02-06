@@ -1,6 +1,8 @@
 #ifndef TPLCC_PREPROCESSOR_H
 #define TPLCC_PREPROCESSOR_H
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <cassert>
 #include <cctype>
@@ -17,8 +19,6 @@
 #include <utility>
 #include <variant>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "code-buffer.h"
 #include "encoding.h"
@@ -40,7 +40,7 @@ struct MacroDefinition {
 
   MacroDefinition(std::string name, std::string body,
                   MacroType type = MacroType::OBJECT_LIKE_MACRO)
-      : name(std::move(name)), body(std::move(body)), type(type){};
+      : name(std::move(name)), body(std::move(body)), type(type) {};
 
   MacroDefinition(std::string name, std::vector<std::string> parameters,
                   std::string body,
@@ -48,7 +48,7 @@ struct MacroDefinition {
       : name(std::move(name)),
         body(std::move(body)),
         parameters(std::move(parameters)),
-        type(type){};
+        type(type) {};
 };
 
 using PreprocessorDirective = std::variant<MacroDefinition>;
@@ -390,12 +390,11 @@ class PPDirectiveLookaheadScanner : public IBaseScanner {
   PPLookaheadScanner<F> _ppls;
 
  public:
-  PPDirectiveLookaheadScanner(PPLookaheadScanner<F> ppls) : _ppls(ppls){};
+  PPDirectiveLookaheadScanner(PPLookaheadScanner<F> ppls) : _ppls(ppls) {};
 
   int get() override;
   int peek() const override;
   bool reachedEndOfInput() const override;
-  void refresh();
 };
 
 template <ByteDecoderConcept F>
@@ -446,13 +445,6 @@ bool PPDirectiveLookaheadScanner<F>::reachedEndOfInput() const {
 }
 
 template <ByteDecoderConcept F>
-void PPDirectiveLookaheadScanner<F>::refresh() {
-  _ppls.refresh();
-}
-
-class RawBufferLookaheadScanner : public IBaseScanner {};
-
-template <ByteDecoderConcept F>
 class RawBufferScanner : public IOffsetLookaheadable<RawBufferScanner<F>> {
   const char* const _buffer;
   const std::size_t _bufferSize;
@@ -465,7 +457,7 @@ class RawBufferScanner : public IOffsetLookaheadable<RawBufferScanner<F>> {
       : _buffer(buffer),
         _bufferSize(bufferSize),
         _decodeChar(readUTF32),
-        _cursor(buffer){};
+        _cursor(buffer) {};
 
   int get() override {
     if (_cursor == _buffer + _bufferSize) return EOF;
@@ -514,7 +506,7 @@ class PPImpl {
   PPScanner<F> scanner;
 
   bool canParseDirectives = true;
-  bool justOuputedSpace = false;
+  bool justOutputedSpace = false;
 
  public:
   PPImpl(CodeBuffer& codeBuffer, IReportError& errOut, F&& readUTF32)
@@ -703,8 +695,7 @@ inline std::string createFunctionLikeMacroCacheKey(
 template <typename T>
   requires std::derived_from<std::decay_t<T>, IBaseScanner>
 void skipAll(T&& scanner) {
-  while (scanner.get() != EOF)
-    ;
+  while (scanner.get() != EOF);
 }
 template <typename T>
   requires std::derived_from<std::decay_t<T>, IBaseScanner>
@@ -750,41 +741,83 @@ bool isFirstCharOfIdentifier(const char ch) {
 
 template <ByteDecoderConcept F>
 PPCharacter PPImpl<F>::get() {
+  /**
+   * An identifier is a string such as a variable or function name. The
+   * different between a preprocessor identifier and a lexer/parser identifier
+   * is simliar.
+   *
+   * The preprocessor needs to parse identifiers because of macros. Every macro
+   * name is a identifier, so every time we see a character that can starts an
+   * identifier, we need to scan through it and check if it's a macro name. A
+   * `identScanner` will be created as we start scaning the identifier, which
+   * records each character that have been scanned. As we finished, if we
+   * confirmed the identifier IS a macro, we will discard it and start expanding
+   * the macro, otherwiswe will keep it and let it output the character it
+   * recorded.
+   *
+   * For error reporting, the `identScanner` is a `OffsetCharScanner`, which
+   * stores the offset of each character in the identifiers. So when an error
+   * happened, the error handling code can both print the identifier and its the
+   * location. If we store the identifier string itself, this information will
+   * be lost.
+   *
+   * Note: The design is somewhat non-obvious. e.g. The role of `identScanner`
+   * is not immediately clear from its name alone. Hope there may be a better,
+   * more self-explanatory design with fewer intermidate concepts.
+   */
   if (identScanner) {
     const auto offset = identScanner->offset();
     const auto ch = identScanner->get();
     if (identScanner->reachedEndOfInput()) {
       identScanner = nullptr;
     }
-    justOuputedSpace = false;
+    justOutputedSpace = false;
     return PPCharacter(ch, offset);
   }
 
   if (scanner.reachedEndOfInput()) {
-    justOuputedSpace = false;
+    justOutputedSpace = false;
     return PPCharacter::eof();
   }
 
-  // A row of spaces and comments will be merge into one space. That means
-  // whenever we read a space or a comment, we will skip as far as possible then
-  // return a space to the caller.
+  // Skips contiguous spaces and comments and returns a single blank character
+  // to the caller. Error ranges in diagnostics never include leading or
+  // trailing whitespace, hence the offset of the blank character is irrelevant.
   if (isSpaceOrStartOfComment(scanner)) {
-    // Actually an error range will not start or end with a space or a comment,
-    // so it doesn't matter what offset we return to the caller.
-
     const auto offset = scanner.offset();
     skipSpacesAndComments(scanner);
+
+    /**
+     * TODO rewrite `canParseDirectives`
+     *
+     * The name `canParseDirectives` doesn't really tell when we can parse
+     * directives. It is better to replace it with actual state conditions like
+     * `isAtLineStart()` or make `canParseDirective` a function that wraps
+     * actual conditional statements.
+     */
+
+    /**
+     * Note: We can use a state machine to avoid recursive get(). This show the
+     * states explicitly.
+     */
 
     if (scanner.peek() == '#' && canParseDirectives) {
       parseDirective();
       return get();
     }
 
-    if (justOuputedSpace) return get();
+    /**
+     * TODO rewrite `justOutputedSpace`
+     *
+     * Maybe we can check if the previous character is whitespace instead of
+     * using this boolean varaible?
+     */
+    if (justOutputedSpace) return get();
 
-    justOuputedSpace = true;
+    justOutputedSpace = true;
     return PPCharacter(' ', offset);
   }
+
   if (scanner.peek() == '#' && canParseDirectives) {
     parseDirective();
     return get();
@@ -796,8 +829,10 @@ PPCharacter PPImpl<F>::get() {
   // until reaching the next line.
   canParseDirectives = false;
 
+  /**
+   * Parse an identifier and expand it if it is a macro.
+   */
   if (isStartOfIdentifier(scanner.peek())) {
-    using namespace MacroExpansionResult;
     CharOffsetRecorder recorder(scanner);
     const auto identifier = parseIdentifier(recorder);
     auto res = tryExpandingMacro(identifier, scanner);
@@ -809,17 +844,17 @@ PPCharacter PPImpl<F>::get() {
       return get();
     }
 
-    if (const auto ptr = std::get_if<Fail>(&res)) {
+    if (const auto ptr = std::get_if<MacroExpansionResult::Fail>(&res)) {
       identScanner = std::make_unique<OffsetCharScanner<F>>(
           codeBuffer, recorder.offsets(), scanner.byteDecoder());
       return get();
     }
 
-    const auto ok = std::get<Ok>(res);
+    const auto ok = std::get<MacroExpansionResult::Ok>(res);
 
     if (sectionContentEquals(ok.sectionID, " ")) {
-      if (justOuputedSpace) return get();
-      justOuputedSpace = true;
+      if (justOutputedSpace) return get();
+      justOutputedSpace = true;
     }
 
     scanner.enterSection(ok.sectionID);
@@ -827,7 +862,31 @@ PPCharacter PPImpl<F>::get() {
     return get();
   }
 
-  justOuputedSpace = false;
+  /**
+   * Handle punctuator
+   *
+   * If we checked the token isn't an identifer, a whitespace, nor a directive,
+   * It must be a punctuators.
+   */
+
+  /**
+   * TODO Missed proper handling to punctuator.
+   *
+   * e.g.
+   * ```
+   * #define A(x) x
+   *
+   * A(+)A(+)
+   * ```
+   * should produce:
+   * ```
+   * + +
+   * ```
+   * (with a whitespace in between, so that it won't become punctuator `++`
+   * unexpectedly)
+   *
+   */
+  justOutputedSpace = false;
   const auto ch = scanner.get();
   const auto offset = scanner.offset();
   return PPCharacter(ch, offset);
@@ -868,8 +927,36 @@ MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
     }
 
     arguments = std::get<std::vector<std::string>>(std::move(result));
-    // If there is nothing inside an argument list, e.g. ID(), the
-    // macro will still have a empty string as its only argument.
+
+    /**
+     *
+     * TODO rewrite incorrect expansion logic.
+     *
+     * *INCORRECT LOGICS:*
+     *
+     * Eagerly expanding and caching expanding result is incorrect for
+     * environmental macro e.g. one with __TIME__ or __LINE__. Plus the cache
+     * key is not inserted.
+     *
+     * *CORRECT APPROACH:*
+     *
+     * Avoid caching and eager expansion. Instead, store a std::string_view (a
+     * "range") that points to the macro's body in the source, which is stored
+     * in a MacroDefinition. When a macro is invoked, redirect to the start of
+     * this range.
+     *
+     * Same logic is applied to the macro arguments: instead of fully expand
+     * them upfront, we identify each argument's range as std::string_view.
+     * While scanning the macro body, if an identifier matches a macro
+     * parameter, the scanner will be redirect to start of correspondent
+     * argument's std::string_view.
+     */
+
+    /*
+     * If a function-like macro have only one parameter, we can legally invoke
+     * it without an argument, and in this case the first argument will default
+     * to an empty string.
+     */
     if (macroDef->parameters.size() == 1 && arguments.empty()) {
       arguments.push_back("");
     }
@@ -1012,6 +1099,10 @@ std::string PPImpl<F>::parseFunctionLikeMacroArgument(PPScanner<F>& scanner) {
       const auto startOffset = scanner.offset();
       const auto identifier = parseIdentifier(scanner);
 
+      /**
+       * We now expand a macro fully, put it to a new section of the code
+       * buffer, and redirect the scanner to the new section. For each macro
+       */
       auto res = tryExpandingMacro(identifier, scanner);
 
       if (const auto ptr = std::get_if<Error>(&res)) {
