@@ -1,9 +1,9 @@
 ﻿#include <sstream>
 #include <vector>
 #include <gtest/gtest.h>
-#include <format>
+#include <fmt/format.h>
 
-#include "tplcc/Lexer.h"
+#include "tplcc/lexer.h"
 #include "./mocking/simple-string-scanner.h"
 #include "./mocking/report-error-stub.h"
 #include "./utils/helpers.h"
@@ -46,7 +46,7 @@ void testCharacterLiteral(const std::string& str, const std::string& expectedCon
 
 void testInvalidStringPrefix(const std::string& prefix) {
 	ReportErrorStub errOut;
-	SimpleStringScanner li(std::format("      {}\"hello\"", prefix));
+	SimpleStringScanner li(fmt::format("      {}\"hello\"", prefix));
 	Lexer lexer(li, errOut);
 
 	errOut.listOfErrors.clear();

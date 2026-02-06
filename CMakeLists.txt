@@ -13,6 +13,8 @@ endif()
 
 project ("tplcc")
 
+find_package(fmt CONFIG REQUIRED)
+
 # Include sub-projects.
 add_subdirectory ("tplcc")
 add_subdirectory ("tests")

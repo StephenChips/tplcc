@@ -21,7 +21,9 @@ public:
     Error(std::tuple<CodeBuffer::Offset, CodeBuffer::Offset> range,
           std::string msg, std::string hintMsg = "")
         : _range(range), _message(std::move(msg)), _hint(std::move(hintMsg)) {}
-
+        
+    bool operator==(const Error&) const = default;
+    
     std::string hint() const {
         return _hint;
     }

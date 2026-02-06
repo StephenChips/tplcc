@@ -7,7 +7,6 @@
 #include <compare>
 #include <concepts>
 #include <cstdint>
-#include <format>
 #include <memory>
 #include <optional>
 #include <set>
@@ -18,6 +17,8 @@
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include <fmt/format.h>
 
 #include "code-buffer.h"
 #include "encoding.h"
@@ -875,7 +876,7 @@ MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
     if (macroDef->parameters.size() != arguments.size()) {
       return Error{
           {startOffset, scanner.offset()},
-          std::format("The macro \"{}\" requires {} argument(s), but got {}.",
+          fmt::format("The macro \"{}\" requires {} argument(s), but got {}.",
                       macroDef->name, macroDef->parameters.size(),
                       arguments.size()),
           ""};
@@ -939,7 +940,7 @@ PPImpl<F>::parseFunctionLikeMacroArgumentList(PPScanner<F>& scanner,
     const auto endOffset = scanner.offset();
 
     return Error{{startOffset, endOffset},
-                 std::format("unterminated argument list invoking macro \"{}\"",
+                 fmt::format("unterminated argument list invoking macro \"{}\"",
                              macroDef.name),
                  ""};
   }
@@ -1193,7 +1194,7 @@ PPImpl<F>::parseFunctionLikeMacroParameters(const std::string& macroName,
       const auto identEndOffset = scanner.offset();
       return Error{
           {identStartOffset, identEndOffset},
-          std::format(
+          fmt::format(
               "Duplicated parameter \"{}\" in the function-like macro \"{}\".",
               parameter, macroName)};
     }

@@ -1,3 +1,5 @@
+#pragma execution_character_set("utf-8")
+
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -128,7 +130,7 @@ TEST_F(TestPreprocessor, define_directive_in_a_string) {
 }
 
 TEST_F(TestPreprocessor, test_encoding) {
-  const auto s = fromUTF8(std::u8string{u8"Äã"});
+  const auto s = fromUTF8(std::u8string{u8"ðŸ˜€"});
   setUpPreprocessor(s);
 
   std::vector<std::uint32_t> characters;
@@ -138,7 +140,7 @@ TEST_F(TestPreprocessor, test_encoding) {
   }
 
   if (characters == std::vector{0xe4u, 0xbdu, 0xa0u}) {
-    FAIL() << "Outputted the multibyte UTF-8 character Äã as three single byte "
+    FAIL() << "Outputted the multibyte UTF-8 character ðŸ˜€ as three single byte "
               "characters.";
     return;
   }

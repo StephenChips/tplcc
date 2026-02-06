@@ -71,9 +71,9 @@ struct CharacterLiteral {
 };
 
 enum class Keyword {
-	_Bool,
-	_Complex,
-	_Imaginary,
+	Bool,
+	Complex,
+	Imaginary,
 	Auto,
 	Break,
 	Case,

@@ -7,8 +7,9 @@
 #include <variant>
 #include <functional>
 #include <sstream>
+#include <iterator>
 
-#include "./Lexer.h"
+#include "./lexer.h"
 
 namespace {
 	template<std::ranges::range Container, typename Element>
@@ -71,9 +72,9 @@ namespace {
 	};
 
 	static std::vector<std::pair<const char*, Keyword>> keywordPairs{
-		{ "_Bool", Keyword::_Bool },
-		{ "_Complex", Keyword::_Complex },
-		{ "_Imaginary", Keyword::_Imaginary },
+		{ "_Bool", Keyword::Bool },
+		{ "_Complex", Keyword::Complex },
+		{ "_Imaginary", Keyword::Imaginary },
 		{ "auto", Keyword::Auto },
 		{ "break", Keyword::Break },
 		{ "case", Keyword::Case },
@@ -380,7 +381,8 @@ void Lexer::scanCharSequenceContent(const char quote, std::string* output) {
 				: "The character literal has no ending quote.",
 			"No ending quote."
 			});
-		throw std::exception("Irrecoverable error happened, compilation is interrupted.");
+			
+		throw std::runtime_error("Irrecoverable error happened, compilation is interrupted.");
 	}
 
 	scanner.ignore(); // ignore the ending quote

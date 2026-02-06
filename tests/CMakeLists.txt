@@ -1,4 +1,5 @@
 find_package(GTest CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -23,6 +24,7 @@ target_include_directories(tests-main PUBLIC "..")
 target_link_libraries(
   tests-main
   GTest::gtest_main
+  fmt::fmt
 )
 
 add_test(tests-main tests-main)
