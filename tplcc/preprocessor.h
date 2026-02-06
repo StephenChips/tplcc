@@ -514,7 +514,7 @@ class PPImpl {
   PPScanner<F> scanner;
 
   bool canParseDirectives = true;
-  bool justOuputedSpace = false;
+  bool justOutputedSpace = false;
 
  public:
   PPImpl(CodeBuffer& codeBuffer, IReportError& errOut, F&& readUTF32)
@@ -777,12 +777,12 @@ PPCharacter PPImpl<F>::get() {
     if (identScanner->reachedEndOfInput()) {
       identScanner = nullptr;
     }
-    justOuputedSpace = false;
+    justOutputedSpace = false;
     return PPCharacter(ch, offset);
   }
 
   if (scanner.reachedEndOfInput()) {
-    justOuputedSpace = false;
+    justOutputedSpace = false;
     return PPCharacter::eof();
   }
 
@@ -801,9 +801,9 @@ PPCharacter PPImpl<F>::get() {
       return get();
     }
 
-    if (justOuputedSpace) return get();
+    if (justOutputedSpace) return get();
 
-    justOuputedSpace = true;
+    justOutputedSpace = true;
     return PPCharacter(' ', offset);
   }
   if (scanner.peek() == '#' && canParseDirectives) {
@@ -839,8 +839,8 @@ PPCharacter PPImpl<F>::get() {
     const auto ok = std::get<Ok>(res);
 
     if (sectionContentEquals(ok.sectionID, " ")) {
-      if (justOuputedSpace) return get();
-      justOuputedSpace = true;
+      if (justOutputedSpace) return get();
+      justOutputedSpace = true;
     }
 
     scanner.enterSection(ok.sectionID);
@@ -848,7 +848,7 @@ PPCharacter PPImpl<F>::get() {
     return get();
   }
 
-  justOuputedSpace = false;
+  justOutputedSpace = false;
   const auto ch = scanner.get();
   const auto offset = scanner.offset();
   return PPCharacter(ch, offset);
