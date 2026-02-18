@@ -100,7 +100,7 @@ TEST_F(TestPreprocessor, test_comments_and_spaces) {
  * `backslash-newline` sequence (a '\' followed by a newline: a '\r', '\n' or
  * '\r\n') can appear anywhere in the source code, and it is skipped. It is not
  * syntax exclusive to #define directive for delimiting lines within a macro
- * body, contrary to common misconception. Therefore you find logic within
+ * body, contrary to common misconception. Therefore you won't find logic within
  * parsing #define directives that handle `backslash-newline` sequences, because
  * they are handled at an earlier stage.
  */
