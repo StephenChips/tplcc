@@ -569,6 +569,3 @@ Testing/
 .cache/
 
 # Other files to ignore
-
-# The output file
-tplcc

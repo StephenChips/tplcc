@@ -9,6 +9,7 @@ add_executable (tplcc
 	"code-buffer.cpp"
 	"encoding.cpp"
 	"preprocessor.h"
+	"pp.h"
 )
 
 

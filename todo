@@ -1,0 +1,19 @@
+1. Reflactor the program, simplify classes and inheritances.
+2. Rewrite the macro expansion logics
+3. Consider rearranges test cases into files and change the preprocessor's input from the codebuffer to the source file's name.
+
+4. Macro redef problem: check if a macro is identical to the previous redefined one (if exists) and if so skip the error.
+5. No unexpected punctuator concatenation, e.g. A(+)A(+) -> + +, where #defeine A(a) a
+    1. This can be solve by using an automata.
+6. Rewrite canParseDirectives
+7. Rewrite justOutputedSpace
+
+delete directivescanner/directivelookaheadscanner
+
+IBaseScanner can be removed, cause this abstraction isn't used anywhere, except two functions `skipNewlines` and `parseIdentifier`.
+I don't mind to write these two function twice in `preprocessor` and `lexer` modules because they are simple functions. Plus
+`parseIdentifier` should return a `string_view` rather than a `string`.
+
+raname `lookaheadScanner` to `lookaheadNoExpand`, merge the functionality to the scanner maybe.
+
+Remove CharOffsetRecorder and OffsetCharScanner. These two class are made just for parsing identifiers, it makes things complicated.

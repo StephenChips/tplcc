@@ -13,7 +13,7 @@
 class TestPreprocessor : public ::testing::Test {
  protected:
   std::unique_ptr<ReportErrorStub> errOut;
-  std::unique_ptr<Preprocessor<>> pp;
+  std::unique_ptr<PreprocessingLexer<>> pp;
   std::unique_ptr<CodeBuffer> codeBuffer;
 
   std::string scanInput(const std::string& inputStr) {
@@ -24,7 +24,7 @@ class TestPreprocessor : public ::testing::Test {
   void setUpPreprocessor(const std::string& inputStr) {
     codeBuffer = std::make_unique<CodeBuffer>(inputStr);
     errOut = std::make_unique<ReportErrorStub>();
-    pp = std::make_unique<Preprocessor<>>(*codeBuffer, *errOut);
+    pp = std::make_unique<PreprocessingLexer<>>(*codeBuffer, *errOut);
   }
 
  private:
@@ -100,7 +100,7 @@ TEST_F(TestPreprocessor, test_comments_and_spaces) {
  * `backslash-newline` sequence (a '\' followed by a newline: a '\r', '\n' or
  * '\r\n') can appear anywhere in the source code, and it is skipped. It is not
  * syntax exclusive to #define directive for delimiting lines within a macro
- * body, contrary to common misconception. Therefore you find logic within
+ * body, contrary to common misconception. Therefore you won't find logic within
  * parsing #define directives that handle `backslash-newline` sequences, because
  * they are handled at an earlier stage.
  */

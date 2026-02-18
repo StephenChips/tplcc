@@ -53,23 +53,12 @@ struct MacroDefinition {
 
 using PreprocessorDirective = std::variant<MacroDefinition>;
 
-struct Loc {
-  size_t lineNumber;
-  size_t charOffset;
-};
-
 struct MacroExpansionRecord {
   std::vector<std::string> includeStack;
   size_t macroLocation;
   // the name of file where the macro is defined.
   std::string nameOfMacroDefFile;
   std::string expandedText;
-};
-
-struct CodeLocation {
-  std::vector<std::string> includeStack;
-  Loc location;
-  MacroExpansionRecord* macro;
 };
 
 struct IMacroExpansionRecords {
@@ -83,12 +72,6 @@ bool isNewlineCharacter(int ch);
 
 template <ByteDecoderConcept F>
 class PPImpl;
-
-template <typename T>
-concept CreatescannerFunc =
-    requires(T func, const CodeBuffer& buffer, CodeBuffer::Offset offset) {
-      { func(buffer, offset) };
-    };
 
 struct CompareMacroDefinition {
   using is_transparent = std::true_type;
@@ -635,12 +618,12 @@ void PPImpl<F>::skipSpaces(IOffsetScanner& scanner, T&& isSpaceFn) {
 }
 
 template <ByteDecoderConcept F = decltype(utf8)>
-class Preprocessor {
+class PreprocessingLexer {
   mutable PPImpl<F> ppImpl;
   mutable std::optional<PPCharacter> lookaheadBuffer;
 
  public:
-  Preprocessor(CodeBuffer& codeBuffer, IReportError& errOut,
+  PreprocessingLexer(CodeBuffer& codeBuffer, IReportError& errOut,
                F&& readUTF32 = utf8)
       : ppImpl(codeBuffer, errOut, std::move(readUTF32)) {}
 
