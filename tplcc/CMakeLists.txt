@@ -7,11 +7,9 @@ add_executable (tplcc
 	"tplcc.cpp"
 	"lexer.cpp"
 	"code-buffer.cpp"
-	"encoding.cpp"
 	"preprocessor.h"
-	"pp.h"
+	"preprocessing-lexer.h"
 )
-
 
 target_link_libraries(tplcc PRIVATE fmt::fmt)
 

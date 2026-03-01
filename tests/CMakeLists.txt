@@ -11,14 +11,7 @@ endif()
 
 add_executable(tests-main
 	"mocking/simple-string-scanner.cpp"
-	"test-lexer.cpp"
-	"test-preprocessor.cpp" 
-	 
-	"../tplcc/lexer.cpp"
-	
-	"../tplcc/code-buffer.cpp"
-	"../tplcc/encoding.cpp"
- "utils/helpers.h" "utils/helpers.cpp")
+	"test-preprocessing-lexer.cpp")
 
 target_include_directories(tests-main PUBLIC "..")
 target_link_libraries(

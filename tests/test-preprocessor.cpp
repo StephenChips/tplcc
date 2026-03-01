@@ -18,7 +18,7 @@ class TestPreprocessor : public ::testing::Test {
 
   std::string scanInput(const std::string& inputStr) {
     setUpPreprocessor(inputStr);
-    return exhaustPreprocessor();
+    return exhaustPreprocessingLexer();
   }
 
   void setUpPreprocessor(const std::string& inputStr) {

@@ -30,25 +30,25 @@ concept ByteDecoderConcept = requires(F func, const unsigned char* addr) {
   { func(addr) } -> std::same_as<std::tuple<int, int>>;
 };
 
-enum class MacroType { OBJECT_LIKE_MACRO, FUNCTION_LIKE_MACRO };
+enum class MacroKind { OBJECT_LIKE_MACRO, FUNCTION_LIKE_MACRO };
 
 struct MacroDefinition {
-  MacroType type;
+  MacroKind kind;
   std::string name;
   std::vector<std::string> parameters;
   std::string body;
 
   MacroDefinition(std::string name, std::string body,
-                  MacroType type = MacroType::OBJECT_LIKE_MACRO)
-      : name(std::move(name)), body(std::move(body)), type(type) {};
+                  MacroKind type = MacroKind::OBJECT_LIKE_MACRO)
+      : name(std::move(name)), body(std::move(body)), kind(type) {};
 
   MacroDefinition(std::string name, std::vector<std::string> parameters,
                   std::string body,
-                  MacroType type = MacroType::FUNCTION_LIKE_MACRO)
+                  MacroKind type = MacroKind::FUNCTION_LIKE_MACRO)
       : name(std::move(name)),
         body(std::move(body)),
         parameters(std::move(parameters)),
-        type(type) {};
+        kind(type) {};
 };
 
 using PreprocessorDirective = std::variant<MacroDefinition>;
@@ -624,7 +624,7 @@ class PreprocessingLexer {
 
  public:
   PreprocessingLexer(CodeBuffer& codeBuffer, IReportError& errOut,
-               F&& readUTF32 = utf8)
+                     F&& readUTF32 = utf8)
       : ppImpl(codeBuffer, errOut, std::move(readUTF32)) {}
 
   PPCharacter get() {
@@ -891,7 +891,7 @@ MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
 
   std::string key;
   std::vector<std::string> arguments;
-  if (macroDef->type == MacroType::FUNCTION_LIKE_MACRO) {
+  if (macroDef->kind == MacroKind::FUNCTION_LIKE_MACRO) {
     auto lookaheadScanner = scanner.lookaheadScanner();
     if (isSpaceOrStartOfComment(scanner)) {
       skipSpacesAndComments(lookaheadScanner);
@@ -961,7 +961,7 @@ MacroExpansionResult::Type PPImpl<F>::tryExpandingMacro(
   }
 
   std::string expandedText;
-  if (macroDef->type == MacroType::FUNCTION_LIKE_MACRO) {
+  if (macroDef->kind == MacroKind::FUNCTION_LIKE_MACRO) {
     expandedText = expandFunctionLikeMacro(*macroDef, arguments);
   } else {
     expandedText = macroDef->body.empty() ? " " : macroDef->body;
@@ -1137,7 +1137,7 @@ void PPImpl<F>::parseDirective() {
   }
 
   if (directiveName == "define") {
-    MacroType macroType = MacroType::OBJECT_LIKE_MACRO;
+    MacroKind macroType = MacroKind::OBJECT_LIKE_MACRO;
     std::vector<std::string> parameters;
 
     skipSpacesAndComments(ppds, isDirectiveSpace);
@@ -1159,14 +1159,14 @@ void PPImpl<F>::parseDirective() {
         goto fail;
       }
 
-      macroType = MacroType::FUNCTION_LIKE_MACRO;
+      macroType = MacroKind::FUNCTION_LIKE_MACRO;
       parameters = std::move(std::get<std::vector<std::string>>(result));
     }
 
     skipSpacesAndComments(ppds, isDirectiveSpace);
     std::string macroBody = readAll(ppds);
 
-    if (macroType == MacroType::OBJECT_LIKE_MACRO) {
+    if (macroType == MacroKind::OBJECT_LIKE_MACRO) {
       setOfMacroDefinitions.insert(MacroDefinition(macroName, macroBody));
     } else {
       setOfMacroDefinitions.insert(
