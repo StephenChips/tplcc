@@ -11,6 +11,28 @@
 #include "tplcc/encoding.h"
 #include "tplcc/preprocessing-lexer.h"
 
+std::ostream& operator<<(std::ostream& os, PunctuatorKind kind) {
+#define X(EnumName, ...)         \
+  case PunctuatorKind::EnumName: \
+    return os << "PunctuatorKind::" << #EnumName;
+
+  switch (kind) { PUNCTUATORS_X_MACRO_LIST }
+  return os;
+
+#undef X
+}
+
+std::ostream& operator<<(std::ostream& os, KeywordKind kind) {
+#define X(PascalCaseName, ...)      \
+  case KeywordKind::PascalCaseName: \
+    return os << "KeywordKind::" << #PascalCaseName;
+
+  switch (kind) { KEYWORDS_X_MACRO_LIST }
+  return os;
+
+#undef X
+}
+
 class TestPreprocessingLexer : public ::testing::Test {
  protected:
   std::unique_ptr<ReportErrorStub> errOut;
@@ -31,7 +53,7 @@ class TestPreprocessingLexer : public ::testing::Test {
   std::vector<Token> exhaustTokens() {
     std::vector<Token> tokens;
 
-    while (pplex->isEof()) {
+    while (!pplex->isEof()) {
       tokens.push_back(pplex->getToken());
     }
 
@@ -39,9 +61,11 @@ class TestPreprocessingLexer : public ::testing::Test {
   }
 };
 
-// TEST_F(TestPreprocessingLexer, test_empty_input) {
-//   EXPECT_EQ(scanInput(""), std::vector<Token>{});
-// }
+TEST_F(TestPreprocessingLexer, test_empty_input) {
+  setUpPreprocessor("");
+  EXPECT_TRUE(pplex->isEof());
+  EXPECT_TRUE(std::holds_alternative<EofToken>(pplex->getToken()));
+}
 
 TEST_F(TestPreprocessingLexer, test_punctuators) {
   struct PunctuatorPair {
@@ -51,75 +75,75 @@ TEST_F(TestPreprocessingLexer, test_punctuators) {
 
   std::vector<PunctuatorPair> punctuatorPairs{
       {PunctuatorKind::LParen, "("},
-      {PunctuatorKind::AmpEq, "&="},
-      {PunctuatorKind::Ge, ">="},
+      {PunctuatorKind::BitwiseAndAssign, "&="},
+      {PunctuatorKind::GreaterOrEqual, ">="},
       {PunctuatorKind::LShift, "<<"},
-      {PunctuatorKind::CaretEq, "^="},
+      {PunctuatorKind::BitwiseXorAssign, "^="},
       {PunctuatorKind::LogicalAnd, "&&"},
-      {PunctuatorKind::HashDigraph, "%:"},
-      {PunctuatorKind::Lt, "<"},
+      {PunctuatorKind::Hash, "%:"},
+      {PunctuatorKind::LessThan, "<"},
       {PunctuatorKind::Semicolon, ";"},
       {PunctuatorKind::RShift, ">>"},
-      {PunctuatorKind::Percent, "%"},
-      {PunctuatorKind::SlashEq, "/="},
+      {PunctuatorKind::Modulo, "%"},
+      {PunctuatorKind::DivideAssign, "/="},
       {PunctuatorKind::Ellipsis, "..."},
       {PunctuatorKind::Slash, "/"},
-      {PunctuatorKind::DoubleHashDigraph, "%:%:"},
+      {PunctuatorKind::HashHash, "%:%:"},
       {PunctuatorKind::Arrow, "->"},
       {PunctuatorKind::Dot, "."},
       {PunctuatorKind::Minus, "-"},
-      {PunctuatorKind::Gt, ">"},
       {PunctuatorKind::RBracket, "]"},
-      {PunctuatorKind::MinusEq, "-="},
+      {PunctuatorKind::GreaterThan, ">"},
+      {PunctuatorKind::MinusAssign, "-="},
       {PunctuatorKind::RParen, ")"},
       {PunctuatorKind::PlusPlus, "++"},
       {PunctuatorKind::Star, "*"},
-      {PunctuatorKind::DoubleHash, "##"},
-      {PunctuatorKind::Eq, "=="},
-      {PunctuatorKind::LBracketDigraph, "<:"},
+      {PunctuatorKind::HashHash, "##"},
+      {PunctuatorKind::Equal, "=="},
+      {PunctuatorKind::LBracket, "<:"},
       {PunctuatorKind::LBracket, "["},
       {PunctuatorKind::MinusMinus, "--"},
-      {PunctuatorKind::PlusEq, "+="},
+      {PunctuatorKind::PlusAssign, "+="},
       {PunctuatorKind::Comma, ","},
-      {PunctuatorKind::PipeEq, "|="},
+      {PunctuatorKind::BitwiseOrAssign, "|="},
       {PunctuatorKind::RBrace, "}"},
-      {PunctuatorKind::Neq, "!="},
+      {PunctuatorKind::NotEqual, "!="},
       {PunctuatorKind::LBrace, "{"},
-      {PunctuatorKind::Le, "<="},
+      {PunctuatorKind::LessOrEqual, "<="},
+      {PunctuatorKind::RShiftAssign, ">>="},
       {PunctuatorKind::Colon, ":"},
-      {PunctuatorKind::RShiftEq, ">>="},
       {PunctuatorKind::Plus, "+"},
-      {PunctuatorKind::Pipe, "|"},
+      {PunctuatorKind::BitwiseOr, "|"},
       {PunctuatorKind::Hash, "#"},
-      {PunctuatorKind::StarEq, "*="},
-      {PunctuatorKind::LShiftEq, "<<="},
+      {PunctuatorKind::MultiplyAssign, "*="},
+      {PunctuatorKind::LShiftAssign, "<<="},
       {PunctuatorKind::Question, "?"},
-      {PunctuatorKind::LBraceDigraph, "<%"},
-      {PunctuatorKind::RBracketDigraph, ":>"},
-      {PunctuatorKind::RBraceDigraph, "%>"},
+      {PunctuatorKind::LBrace, "<%"},
+      {PunctuatorKind::RBracket, ":>"},
+      {PunctuatorKind::RBrace, "%>"},
       {PunctuatorKind::LogicalNot, "!"},
       {PunctuatorKind::LogicalOr, "||"},
-      {PunctuatorKind::PercentEq, "%="},
-      {PunctuatorKind::Caret, "^"},
+      {PunctuatorKind::BitwiseXor, "^"},
+      {PunctuatorKind::ModuloAssign, "%="},
       {PunctuatorKind::Assign, "="},
-      {PunctuatorKind::Tilde, "~"},
-      {PunctuatorKind::Amp, "&"},
+      {PunctuatorKind::BitwiseNot, "~"},
+      {PunctuatorKind::BitwiseAnd, "&"},
   };
 
   std::string input;
   for (auto pair : punctuatorPairs) {
     input += pair.str;
+    input += " ";
   }
 
-  scanInput(input);
+  setUpPreprocessor(input);
 
-  size_t offset = 0;
   for (auto pair : punctuatorPairs) {
     size_t len = std::strlen(pair.str);
     Token token = pplex->getToken();
 
-    if (std::holds_alternative<Eof>(token)) {
-      FAIL() << "lexer reaches to the end too early.";
+    if (std::holds_alternative<EofToken>(token)) {
+      FAIL() << "lexer reaches EOF too early.";
       return;
     }
 
@@ -128,9 +152,28 @@ TEST_F(TestPreprocessingLexer, test_punctuators) {
       FAIL() << "lexer should scan a punctuator " << pair.str << "\n";
     }
 
-    EXPECT_EQ(punctuator->kind, pair.kind);
-    EXPECT_EQ(punctuator->range, std::string_view(input).substr(offset, len));
+    ASSERT_EQ(punctuator->kind, pair.kind);
+    ASSERT_EQ(punctuator->text, std::string{pair.str});
+  }
 
-    offset += len;
+  EXPECT_TRUE(pplex->isEof());
+  EXPECT_TRUE(std::holds_alternative<EofToken>(pplex->getToken()));
+}
+
+TEST_F(TestPreprocessingLexer, test_comments) {
+  std::string input =
+      "// const std::str\\\ning a = \"123\"\n"
+      "/* ### this is a comment            \n"
+      "   a comment is what it     is !+=*/\n"
+      "+\\\n\\\n\\\n\\\n=\n";
+
+  setUpPreprocessor(input);
+  Token token = pplex->getToken();
+
+  if (auto* punctuator = std::get_if<Punctuator>(&token)) {
+    EXPECT_EQ(punctuator->kind, PunctuatorKind::PlusAssign);
+    EXPECT_EQ(punctuator->text, std::string{"+\\\n\\\n\\\n\\\n="});
+  } else {
+    FAIL() << "expect to scan a " << PunctuatorKind::PlusAssign;
   }
 }

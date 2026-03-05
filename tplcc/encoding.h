@@ -6,10 +6,8 @@
 using UTF32Char = char32_t;
 
 struct CharDecodeResult {
-  using CharType = char32_t;
-  using CharLength = unsigned long;
-  CharType codepoint;
-  CharLength length;
+  char32_t codepoint;
+  unsigned long charlen;
 };
 
 template <typename T>
@@ -18,8 +16,8 @@ concept CharDecodeFunc = requires(T decodeFunc, const char* addr) {
 };
 
 inline CharDecodeResult decodeUTF8(const char* buffer) {
-  CharDecodeResult::CharType ch;
-  CharDecodeResult::CharLength len;
+  char32_t ch;
+  unsigned long len;
 
   auto buf = reinterpret_cast<const unsigned char*>(buffer);
 

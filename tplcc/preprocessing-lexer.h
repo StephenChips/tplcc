@@ -1,8 +1,8 @@
 #ifndef TPLCC_PP_H
 #define TPLCC_PP_H
 
+#include <algorithm>
 #include <array>
-#include <concepts>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -60,12 +60,6 @@
   X(LBrace, "{")                 \
   X(RBrace, "}")                 \
                                  \
-  /* Digraph brackets */         \
-  X(LBracketDigraph, "<:")       \
-  X(RBracketDigraph, ":>")       \
-  X(LBraceDigraph, "<%")         \
-  X(RBraceDigraph, "%>")         \
-                                 \
   /* Member / pointer */         \
   X(Dot, ".")                    \
   X(Arrow, "->")                 \
@@ -85,7 +79,7 @@
   X(BitwiseAnd, "&")             \
   X(BitwiseOr, "|")              \
   X(BitwiseXor, "^")             \
-  X(Tilde, "~")                  \
+  X(BitwiseNot, "~")             \
   X(LShift, "<<")                \
   X(RShift, ">>")                \
                                  \
@@ -96,16 +90,16 @@
                                  \
   /* Assignment */               \
   X(Assign, "=")                 \
-  X(PlusEqual, "+=")             \
-  X(MinusEqual, "-=")            \
-  X(MultiplyEqual, "*=")         \
-  X(DivideEqual, "/=")           \
-  X(ModuloEqual, "%=")           \
-  X(BitwiseAndEqual, "&=")       \
-  X(BitwiseOrEqual, "|=")        \
-  X(BitwiseXorEqual, "^=")       \
-  X(LShiftEqual, "<<=")          \
-  X(RShiftEqual, ">>=")          \
+  X(PlusAssign, "+=")            \
+  X(MinusAssign, "-=")           \
+  X(MultiplyAssign, "*=")        \
+  X(DivideAssign, "/=")          \
+  X(ModuloAssign, "%=")          \
+  X(BitwiseAndAssign, "&=")      \
+  X(BitwiseOrAssign, "|=")       \
+  X(BitwiseXorAssign, "^=")      \
+  X(LShiftAssign, "<<=")         \
+  X(RShiftAssign, ">>=")         \
                                  \
   /* Comparison */               \
   X(Equal, "==")                 \
@@ -124,11 +118,16 @@
                                  \
   /* Preprocessor */             \
   X(Hash, "#")                   \
-  X(HashHash, "##")              \
-                                 \
-  /* Digraph preprocessor */     \
-  X(HashDigraph, "%:")           \
-  X(DoubleHashDigraph, "%:%:")
+  X(HashHash, "##")
+
+#define DIGRAPH_PUNCTUATORS_X_MACRO_LIST \
+  X(Hash, "%:")                          \
+  X(HashHash, "%:%:")                    \
+  /* Digraph brackets */                 \
+  X(LBracket, "<:")                      \
+  X(RBracket, ":>")                      \
+  X(LBrace, "<%")                        \
+  X(RBrace, "%>")
 
 enum class KeywordKind {
 #define X(pascalName, name) pascalName,
@@ -145,6 +144,7 @@ enum class PunctuatorKind {
 #define X(...) +1
 constexpr size_t punctuatorKindCount = 0 PUNCTUATORS_X_MACRO_LIST;
 constexpr size_t keywordKindCount = 0 KEYWORDS_X_MACRO_LIST;
+constexpr size_t digraphPunctuatorCount = 0 DIGRAPH_PUNCTUATORS_X_MACRO_LIST;
 #undef X
 
 #define X(name, str) str,
@@ -157,77 +157,70 @@ constexpr std::array<const char*, keywordKindCount> keywordCStrings{
     KEYWORDS_X_MACRO_LIST};
 #undef X
 
-std::ostream& operator<<(std::ostream& os, PunctuatorKind kind) {
-#define X(EnumName, ...)         \
-  case PunctuatorKind::EnumName: \
-    return os << "PunctuatorKind::" << #EnumName;
-
-  switch (kind) { PUNCTUATORS_X_MACRO_LIST }
-  return os;
-
-#undef X
-}
-
-std::ostream& operator<<(std::ostream& os, KeywordKind kind) {
-#define X(PascalCaseName, ...)      \
-  case KeywordKind::PascalCaseName: \
-    return os << "KeywordKind::" << #PascalCaseName;
-
-  switch (kind) { KEYWORDS_X_MACRO_LIST }
-  return os;
-
-#undef X
-}
-
 struct Keyword {
   KeywordKind kind;
-  std::string_view range;
+  std::string_view text;
   bool operator==(const Keyword&) const = default;
 };
 
 struct Identifier {
-  std::string_view range;
+  std::string_view text;
   bool operator==(const Identifier&) const = default;
 };
 
 struct StringLiteral {
-  std::string_view range;
+  std::string_view text;
   bool operator==(const StringLiteral&) const = default;
 };
 
 struct IntegerConstant {
-  std::string_view range;
+  std::string_view text;
   bool operator==(const IntegerConstant&) const = default;
 };
 
 struct FloatingConstant {
-  std::string_view range;
+  std::string_view text;
   bool operator==(const FloatingConstant&) const = default;
 };
 
 struct CharacterConstant {
-  std::string_view range;
+  std::string_view text;
   bool operator==(const CharacterConstant&) const = default;
 };
 
 struct Punctuator {
   PunctuatorKind kind;
-  std::string_view range;
+  std::string_view text;
   bool operator==(const Punctuator&) const = default;
 };
 
 struct InvalidToken {
-  std::string_view range;
+  std::string_view text;
   bool operator==(const InvalidToken&) const = default;
 };
 
-struct Eof {
-  bool operator==(const Eof&) const = default;
+struct EofToken {
+  bool operator==(const EofToken&) const = default;
 };
 
 using Token = std::variant<Keyword, Identifier, StringLiteral, IntegerConstant,
                            FloatingConstant, CharacterConstant, Punctuator,
-                           InvalidToken, Eof>;
+                           InvalidToken, EofToken>;
+
+constexpr auto punctuatorArraySortedByLenDesc = []() {
+#define X(name, str) Punctuator{PunctuatorKind::name, str},
+  std::array<Punctuator, punctuatorKindCount + digraphPunctuatorCount> copy{
+      {PUNCTUATORS_X_MACRO_LIST DIGRAPH_PUNCTUATORS_X_MACRO_LIST}};
+#undef X
+  std::sort(copy.begin(), copy.end(), [](Punctuator first, Punctuator second) {
+    if (first.text.size() != second.text.size()) {
+      return first.text.size() > second.text.size();
+    } else {
+      return first.text > second.text;
+    }
+  });
+  return copy;
+}();
 
 enum class MacroKind { ObjectLikeMacro, FunctionLikeMacro };
 
@@ -265,331 +258,216 @@ template <CharDecodeFunc CharDecodeFunc>
 class PreprocessingLexer {
   using Offset = uint64_t;
 
-  enum class ScanSectionSourceKind { SourceFile, MacroBody, MacroArgument };
-
-  struct ScanSection {
-    ScanSectionSourceKind sourceKind;
-    std::string_view source;
-    std::string_view::size_type returnOffset;
+  struct ScanCursor {
+    std::string_view text;
+    size_t offset;
   };
 
-  using ScanStack = std::vector<ScanSection>;
-
-  struct ScanStackCursor {
-    Offset offset;
-    ScanStack::size_type level;
-  };
+  using ScanStack = std::vector<ScanCursor>;
 
   IReportError& errorOut;
   CharDecodeFunc& decodeFunc;
   ScanStack scanStack;
   std::string input;
-  Offset offset;
 
   std::unordered_set<MacroDefinition> macroDefs;
+
+  void enterSection(std::string_view text) {
+    ScanCursor cursor = initScanCursor(text);
+    if (isAtEnd(cursor)) return;
+    scanStack.push_back(cursor);
+  }
+
+  void exitSection() { scanStack.pop_back(); }
+
+  std::optional<Punctuator> scanPunctuator();
+
+  ScanCursor initScanCursor(std::string_view text) {
+    ScanCursor cursor{text, 0};
+    skipBackslashNewlines(cursor);
+    return cursor;
+  }
+
+  char32_t getChar(ScanCursor& cursor, size_t* len = nullptr,
+                   bool willSkipBackslashNewlines = true) const {
+    // A valid cursor should never points to a '\' '\n' sequence,
+    // so we don't need to skip it before decoding a character.
+    auto [ch, charlen] = decodeFunc(cursor.text.data() + cursor.offset);
+    cursor.offset += charlen;
+    if (len) *len = charlen;
+    if (willSkipBackslashNewlines) skipBackslashNewlines(cursor);
+    return ch;
+  }
+
+  char32_t peekChar(ScanCursor cursor, size_t* len = nullptr) const {
+    auto [ch, charlen] = decodeFunc(cursor.text.data() + cursor.offset);
+    if (len) *len = charlen;
+    return ch;
+  }
+
+  bool isNewlineAt(ScanCursor cursor, size_t* len) {
+    size_t charlen = 0;
+    bool isMatch = false;
+
+    if (!isAtEnd(cursor)) {
+      switch (peekChar(cursor, &charlen)) {
+        case '\n':
+        case '\r':
+          isMatch = true;
+          if (len) *len = charlen;
+          cursor.offset += charlen;
+          if (!isAtEnd(cursor) && peekChar(cursor, &charlen) == '\n') {
+            if (len) *len += charlen;
+            cursor.offset += charlen;
+          }
+      }
+    }
+
+    return isMatch;
+  }
+
+  bool isSpaceAt(ScanCursor cursor, size_t* len = nullptr) const {
+    size_t ch = peekChar(cursor, len);
+    return isSpace(ch);
+  }
+
+  bool isStringAt(ScanCursor cursor, const char* s,
+                  size_t* len = nullptr) const {
+    size_t oldOffset = cursor.offset;
+    while (*s && !isAtEnd(cursor) && getChar(cursor) == *s) {
+      s++;
+    }
+    if (len) *len = cursor.offset - oldOffset;
+    return *s == '\0';
+  }
+
+  void skipBackslashNewlines(ScanCursor& cursor) const {
+    for (;;) {
+      ScanCursor preview = cursor;
+      if (isAtEnd(preview)) break;
+      char32_t ch1 = getChar(preview, nullptr, false);
+      if (ch1 != '\\' || isAtEnd(preview)) break;
+      char32_t ch2 = getChar(preview, nullptr, false);
+      if (ch2 != '\n') break;
+      cursor = preview;
+    }
+  }
+
+  bool isAtEnd(ScanCursor cursor) const {
+    return cursor.offset >= cursor.text.size();
+  }
+
+  // The MSVC's std::isspace will throw a runtime error when we pass a
+  // codepoint that is larger than 255. We have to write our own version of
+  // isspace here to avoid this error.
+  bool isSpace(char32_t ch) const {
+    return ch == ' ' || ch == '\f' || ch == '\n' || ch == '\r' || ch == '\t' ||
+           ch == '\v';
+  }
+  bool isDirectiveSpace(int ch) const { return ch == ' ' || ch == '\t'; }
+  bool isNewlineCharacter(int ch) const { return ch == '\r' || ch == '\n'; }
+
+  bool isStartOfIdentifier(int ch) const {
+    return ch == '_' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z';
+  }
+
+  void skipSpacesAndComments();
 
  public:
   PreprocessingLexer(std::string inputStr, CharDecodeFunc& decodeFunc,
                      IReportError& errorOut)
       : input(std::move(inputStr)), decodeFunc(decodeFunc), errorOut(errorOut) {
-    std::cout << inputStr << std::endl;
-    // It's the root, it doesn't have a return type.
-    ScanSection rootSection{ScanSectionSourceKind::SourceFile,
-                            std::string_view(input)};
-    scanStack.push_back(rootSection);
+    enterSection(input);
+    skipSpacesAndComments();
   };
 
   Token getToken();
   Token peekToken();
   bool isEof();
-
- private:
-  void enterSection(ScanSection);
-  void exitSection();
-  std::optional<Punctuator> scanPunctuator();
-
-  CharDecodeResult::CharType getChar(const ScanSection&, Offset&) const;
-  CharDecodeResult getCharDecodeResult(const ScanSection&, Offset&) const;
-
-  // The MSVC's std::isspace will throw a runtime error when we pass a codepoint
-  // that is larger than 255. We have to write our own version of isspace here
-  // to avoid this error.
-  bool isSpace(int ch) {
-    return ch == ' ' || ch == '\f' || ch == '\n' || ch == '\r' || ch == '\t' ||
-           ch == '\v';
-  }
-  bool isDirectiveSpace(int ch) { return ch == ' ' || ch == '\t'; }
-  bool isNewlineCharacter(int ch) { return ch == '\r' || ch == '\n'; }
-
-  bool isStartOfIdentifier(int ch) {
-    return ch == '_' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z';
-  }
-
-  ScanStackCursor createScanStackItemStackCursor() {
-    return {offset, scanStack.size() - 1};
-  }
 };
 
 template <CharDecodeFunc CharDecodeFunc>
 Token PreprocessingLexer<CharDecodeFunc>::getToken() {
-  if (scanStack.empty()) return Eof{};
-
-  if (std::optional<Punctuator> punctuator = scanPunctuator()) {
-    return *punctuator;
+  if (scanStack.empty()) {
+    return EofToken{};
   }
 
-  return InvalidToken{{scanStack.back().source.substr(offset)}};
+  Token token;
+
+  if (std::optional<Punctuator> punctuator = scanPunctuator()) {
+    token = *punctuator;
+  } else {
+    ScanCursor& cursor = scanStack.back();
+    size_t charlen;
+    size_t oldOffset = cursor.offset;
+    getChar(cursor, &charlen);
+    token = InvalidToken{{cursor.text.substr(oldOffset, charlen)}};
+  }
+
+  skipSpacesAndComments();
+
+  return token;
 }
 
 template <CharDecodeFunc CharDecodeFunc>
 std::optional<Punctuator> PreprocessingLexer<CharDecodeFunc>::scanPunctuator() {
   if (scanStack.empty()) return std::nullopt;
 
-  ScanSection& currentScanSection = scanStack.back();
+  for (Punctuator punctuator : punctuatorArraySortedByLenDesc) {
+    ScanCursor& current = scanStack.back();
+    ScanCursor preview = current;
+    bool isMatch = true;
 
-  Offset cursor = this->offset;
-  char ch[3];
-  for (int i = 0; i < 3; i++) {
-    if (currentScanSection.source.size() == cursor) {
-      ch[i] == '\0';
-    } else {
-      ch[i] = getChar(currentScanSection, cursor);
+    for (char ch : punctuator.text) {
+      if (isAtEnd(preview) || getChar(preview) != ch) {
+        isMatch = false;
+        break;
+      }
+    }
+
+    if (isMatch) {
+      std::string_view str =
+          current.text.substr(current.offset, preview.offset - current.offset);
+      current = preview;
+      return Punctuator{punctuator.kind, str};
     }
   }
 
-  size_t len;
-  PunctuatorKind kind;
-  bool isPunctuator = true;
-
-  switch (c0) {
-    case '[':
-      len = 1;
-      kind = PunctuatorKind::LBracket;
-      break;
-    case ']':
-      len = 1;
-      kind = PunctuatorKind::RBracket;
-      break;
-    case '(':
-      len = 1;
-      kind = PunctuatorKind::LParen;
-      break;
-    case ')':
-      len = 1;
-      kind = PunctuatorKind::RParen;
-      break;
-    case '{':
-      len = 1;
-      kind = PunctuatorKind::LBrace;
-      break;
-    case '}':
-      len = 1;
-      kind = PunctuatorKind::RBrace;
-      break;
-    case '?':
-      len = 1;
-      kind = PunctuatorKind::Question;
-      break;
-    case ':':
-      len = 1;
-      kind = PunctuatorKind::Colon;
-      break;
-    case ';':
-      len = 1;
-      kind = PunctuatorKind::Semicolon;
-      break;
-    case ',':
-      len = 1;
-      kind = PunctuatorKind::Comma;
-      break;
-    case '~':
-      len = 1;
-      kind = PunctuatorKind::Tilde;
-      break;
-
-    case '^':
-      if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::BitwiseXorEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::BitwiseXor;
-      }
-      break;
-    case '.':
-      if (ch[1] == '.' && ch[2] == '.') {
-        len = 3;
-        kind = PunctuatorKind::Ellipsis;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::Dot;
-      }
-      break;
-    case '+':
-      if (ch[1] == '+') {
-        len = 2;
-        kind = PunctuatorKind::PlusPlus;
-      } else if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::PlusEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::Plus;
-      }
-      break;
-    case '-':
-      if (ch[1] == '-') {
-        len = 2;
-        kind = PunctuatorKind::MinusMinus;
-      } else if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::MinusEqual;
-      } else if (ch[1] == '>') {
-        len = 2;
-        kind = PunctuatorKind::Arrow;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::Minus;
-      }
-      break;
-    case '&':
-      if (ch[1] == '&') {
-        len = 2;
-        kind = PunctuatorKind::LogicalAnd;
-      } else if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::BitwiseAndEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::BitwiseAnd;
-      }
-      break;
-    case '|':
-      if (ch[1] == '|') {
-        len = 2;
-        kind = PunctuatorKind::LogicalOr;
-      } else if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::BitwiseOrEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::BitwiseOr;
-      }
-      break;
-    case '*':
-      if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::MultiplyEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::Star;
-      }
-      break;
-    case '/':
-      if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::DivideEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::Slash;
-      }
-      break;
-    case '%':
-      if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::ModuloEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::Modulo;
-      }
-      break;
-    case '=':
-      if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::Equal;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::Assign;
-      }
-      break;
-    case '!':
-      if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::NotEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::LogicalNot;
-      }
-      break;
-    case '<':
-      if (ch[1] == '<') {
-        if (ch[2] == '=') {
-          len = 3;
-          kind = PunctuatorKind::LShiftEqual;
-        } else {
-          len = 2;
-          kind = PunctuatorKind::LShift;
-        }
-      } else if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::LessOrEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::LessThan;
-      }
-      break;
-    case '>':
-      if (ch[1] == '>') {
-        if (ch[2] == '=') {
-          len = 3;
-          kind = PunctuatorKind::RShiftEqual;
-        } else {
-          len = 2;
-          kind = PunctuatorKind::RShift;
-        }
-      } else if (ch[1] == '=') {
-        len = 2;
-        kind = PunctuatorKind::GreaterOrEqual;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::GreaterThan;
-      }
-      break;
-    case '#':
-      if (ch[1] == '#') {
-        len = 2;
-        kind = PunctuatorKind::HashHash;
-      } else {
-        len = 1;
-        kind = PunctuatorKind::Hash;
-      }
-      break;
-    default:
-      isPunctuator = false;
-  }
-
-  if (isPunctuator) {
-    this->offset += len;
-    return Punctuator{
-        kind, std::string_view(currentScanSection.source).substr(offset, len)};
-  } else {
-    return std::nullopt;
-  }
+  return std::nullopt;
 }
 
 template <CharDecodeFunc CharDecodeFunc>
-CharDecodeResult::CharType PreprocessingLexer<CharDecodeFunc>::getChar(
-    const ScanSection& section, Offset& offset) const {
-  return getCharDecodeResult(section, offset).codepoint;
-}
+inline void PreprocessingLexer<CharDecodeFunc>::skipSpacesAndComments() {
+  while (!scanStack.empty()) {
+    ScanCursor& cursor = scanStack.back();
+    size_t len;
 
-template <CharDecodeFunc CharDecodeFunc>
-inline CharDecodeResult PreprocessingLexer<CharDecodeFunc>::getCharDecodeResult(
-    const ScanSection& section, Offset& offset) const {
-  assert(offset < scanSection.source.size());
-  const auto result = decodeFunc(&section.source[offset]);
-  offset += result.length;
-  return result;
+    while (!isAtEnd(cursor)) {
+      if (isSpaceAt(cursor, &len)) {
+        cursor.offset += len;
+      } else if (isStringAt(cursor, "//", &len)) {
+        cursor.offset += len;
+        while (!isNewlineAt(cursor, &len)) {
+          getChar(cursor);
+        }
+        cursor.offset += len;
+      } else if (isStringAt(cursor, "/*", &len)) {
+        cursor.offset += len;
+        while (!isStringAt(cursor, "*/", &len)) {
+          getChar(cursor, &len);
+        }
+        cursor.offset += len;
+      } else {
+        break;
+      }
+    }
+
+    if (isAtEnd(cursor)) {
+      exitSection();
+    } else {
+      break;
+    }
+  }
 }
 
 template <CharDecodeFunc CharDecodeFunc>
