@@ -152,11 +152,6 @@ constexpr std::array<const char*, punctuatorKindCount> punctuatorCStrings{
     PUNCTUATORS_X_MACRO_LIST};
 #undef X
 
-#define X(pascalName, name) #name,
-constexpr std::array<const char*, keywordKindCount> keywordCStrings{
-    KEYWORDS_X_MACRO_LIST};
-#undef X
-
 struct Keyword {
   KeywordKind kind;
   std::string_view text;
@@ -207,19 +202,25 @@ using Token = std::variant<Keyword, Identifier, StringLiteral, IntegerConstant,
                            FloatingConstant, CharacterConstant, Punctuator,
                            InvalidToken, EofToken>;
 
+#define X(PascalName, name) {KeywordKind::PascalName, #name},
+constexpr std::array<Keyword, keywordKindCount> keywordArray{
+    {KEYWORDS_X_MACRO_LIST}};
+#undef X
+
 constexpr auto punctuatorArraySortedByLenDesc = []() {
 #define X(name, str) Punctuator{PunctuatorKind::name, str},
-  std::array<Punctuator, punctuatorKindCount + digraphPunctuatorCount> copy{
+  std::array<Punctuator, punctuatorKindCount + digraphPunctuatorCount> array{
       {PUNCTUATORS_X_MACRO_LIST DIGRAPH_PUNCTUATORS_X_MACRO_LIST}};
 #undef X
-  std::sort(copy.begin(), copy.end(), [](Punctuator first, Punctuator second) {
-    if (first.text.size() != second.text.size()) {
-      return first.text.size() > second.text.size();
-    } else {
-      return first.text > second.text;
-    }
-  });
-  return copy;
+  std::sort(array.begin(), array.end(),
+            [](Punctuator first, Punctuator second) {
+              if (first.text.size() != second.text.size()) {
+                return first.text.size() > second.text.size();
+              } else {
+                return first.text > second.text;
+              }
+            });
+  return array;
 }();
 
 enum class MacroKind { ObjectLikeMacro, FunctionLikeMacro };
@@ -258,12 +259,12 @@ template <CharDecodeFunc CharDecodeFunc>
 class PreprocessingLexer {
   using Offset = uint64_t;
 
-  struct ScanCursor {
+  struct ScanSection {
     std::string_view text;
     size_t offset;
   };
 
-  using ScanStack = std::vector<ScanCursor>;
+  using ScanStack = std::vector<ScanSection>;
 
   IReportError& errorOut;
   CharDecodeFunc& decodeFunc;
@@ -273,105 +274,207 @@ class PreprocessingLexer {
   std::unordered_set<MacroDefinition> macroDefs;
 
   void enterSection(std::string_view text) {
-    ScanCursor cursor = initScanCursor(text);
-    if (isAtEnd(cursor)) return;
-    scanStack.push_back(cursor);
+    ScanSection section = initScanSection(text);
+    if (section.offset >= section.text.size()) return;
+    scanStack.push_back(section);
   }
 
   void exitSection() { scanStack.pop_back(); }
 
-  std::optional<Punctuator> scanPunctuator();
+  std::optional<Punctuator> scanPunctuator() {
+    if (scanStack.empty()) return std::nullopt;
 
-  ScanCursor initScanCursor(std::string_view text) {
-    ScanCursor cursor{text, 0};
-    skipBackslashNewlines(cursor);
-    return cursor;
-  }
+    for (Punctuator punctuator : punctuatorArraySortedByLenDesc) {
+      ScanSection& section = scanStack.back();
+      size_t offset = section.offset;
+      bool isMatch = true;
 
-  char32_t getChar(ScanCursor& cursor, size_t* len = nullptr,
-                   bool willSkipBackslashNewlines = true) const {
-    // A valid cursor should never points to a '\' '\n' sequence,
-    // so we don't need to skip it before decoding a character.
-    auto [ch, charlen] = decodeFunc(cursor.text.data() + cursor.offset);
-    cursor.offset += charlen;
-    if (len) *len = charlen;
-    if (willSkipBackslashNewlines) skipBackslashNewlines(cursor);
-    return ch;
-  }
+      for (char ch : punctuator.text) {
+        if (offset >= section.text.size() ||
+            getCharAtOffset(section, offset) != ch) {
+          isMatch = false;
+          break;
+        }
+      }
 
-  char32_t peekChar(ScanCursor cursor, size_t* len = nullptr) const {
-    auto [ch, charlen] = decodeFunc(cursor.text.data() + cursor.offset);
-    if (len) *len = charlen;
-    return ch;
-  }
-
-  bool isNewlineAt(ScanCursor cursor, size_t* len) {
-    size_t charlen = 0;
-    bool isMatch = false;
-
-    if (!isAtEnd(cursor)) {
-      switch (peekChar(cursor, &charlen)) {
-        case '\n':
-        case '\r':
-          isMatch = true;
-          if (len) *len = charlen;
-          cursor.offset += charlen;
-          if (!isAtEnd(cursor) && peekChar(cursor, &charlen) == '\n') {
-            if (len) *len += charlen;
-            cursor.offset += charlen;
-          }
+      if (isMatch) {
+        std::string_view str =
+            section.text.substr(section.offset, offset - section.offset);
+        section.offset = offset;
+        return Punctuator{punctuator.kind, str};
       }
     }
 
-    return isMatch;
-  }
-
-  bool isSpaceAt(ScanCursor cursor, size_t* len = nullptr) const {
-    size_t ch = peekChar(cursor, len);
-    return isSpace(ch);
-  }
-
-  bool isStringAt(ScanCursor cursor, const char* s,
-                  size_t* len = nullptr) const {
-    size_t oldOffset = cursor.offset;
-    while (*s && !isAtEnd(cursor) && getChar(cursor) == *s) {
-      s++;
-    }
-    if (len) *len = cursor.offset - oldOffset;
-    return *s == '\0';
-  }
-
-  void skipBackslashNewlines(ScanCursor& cursor) const {
-    for (;;) {
-      ScanCursor preview = cursor;
-      if (isAtEnd(preview)) break;
-      char32_t ch1 = getChar(preview, nullptr, false);
-      if (ch1 != '\\' || isAtEnd(preview)) break;
-      char32_t ch2 = getChar(preview, nullptr, false);
-      if (ch2 != '\n') break;
-      cursor = preview;
-    }
-  }
-
-  bool isAtEnd(ScanCursor cursor) const {
-    return cursor.offset >= cursor.text.size();
+    return std::nullopt;
   }
 
   // The MSVC's std::isspace will throw a runtime error when we pass a
   // codepoint that is larger than 255. We have to write our own version of
   // isspace here to avoid this error.
-  bool isSpace(char32_t ch) const {
+  inline bool isSpace(char32_t ch) {
     return ch == ' ' || ch == '\f' || ch == '\n' || ch == '\r' || ch == '\t' ||
            ch == '\v';
   }
-  bool isDirectiveSpace(int ch) const { return ch == ' ' || ch == '\t'; }
-  bool isNewlineCharacter(int ch) const { return ch == '\r' || ch == '\n'; }
+  inline bool isDirectiveSpace(char32_t ch) { return ch == ' ' || ch == '\t'; }
+  inline bool isNewlineCharacter(char32_t ch) {
+    return ch == '\r' || ch == '\n';
+  }
 
-  bool isStartOfIdentifier(int ch) const {
+  inline bool isStartOfIdentifier(char32_t ch) {
     return ch == '_' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z';
   }
 
-  void skipSpacesAndComments();
+  ScanSection initScanSection(std::string_view text) {
+    ScanSection cursor{text, 0};
+    skipBackslashNewlines(cursor);
+    return cursor;
+  }
+
+  char32_t getChar(ScanSection& section,
+                   bool willSkipBackslashNewlines = true) const {
+    return getCharAtOffset(section, section.offset, willSkipBackslashNewlines);
+  }
+
+  char32_t getCharAtOffset(const ScanSection& section, size_t& offset,
+                           bool willSkipBackslashNewlines = true) const {
+    // A valid cursor should never points to a '\' '\n' sequence,
+    // so we don't need to skip it before decoding a character.
+    auto [ch, charlen] = decodeFunc(section.text.data() + offset);
+    offset += charlen;
+    if (willSkipBackslashNewlines) {
+      skipBackslashNewlinesAtOffset(section, offset);
+    }
+    return ch;
+  }
+
+  char32_t peekChar(const ScanSection& section, size_t* endOffset = nullptr,
+                    bool willSkipBackslashNewlines = true) const {
+    return peekCharAtOffset(section, section.offset, endOffset,
+                            willSkipBackslashNewlines);
+  }
+
+  char32_t peekCharAtOffset(const ScanSection& section, size_t offset,
+                            size_t* endOffset = nullptr,
+                            bool willSkipBackslashNewlines = true) const {
+    char32_t ch = getCharAtOffset(section, offset, willSkipBackslashNewlines);
+    if (endOffset) *endOffset = offset;
+    return ch;
+  }
+
+  bool isMatchNewline(const ScanSection& section, size_t* endOffset = nullptr) {
+    if (section.offset >= section.text.size()) {
+      return false;
+    }
+
+    bool isMatch = false;
+    size_t offset = section.offset;
+    size_t nextOffset;
+
+    char32_t ch = peekCharAtOffset(section, offset, &nextOffset);
+    if (ch == '\r') {
+      isMatch = true;
+      offset = nextOffset;
+      ch = peekCharAtOffset(section, offset, &nextOffset);
+      if (ch == '\n') offset = nextOffset;
+    } else if (ch == '\n') {
+      isMatch = true;
+      offset = nextOffset;
+    }
+
+    if (isMatch && endOffset) {
+      *endOffset = offset;
+    }
+
+    return isMatch;
+  }
+
+  bool isMatchSpace(const ScanSection& section, size_t* endOffset = nullptr) {
+    size_t ch = peekChar(section, endOffset);
+    return isSpace(ch);
+  }
+
+  bool isMatchString(const ScanSection& section, const char* s,
+                     size_t* endOffset = nullptr) {
+    size_t offset = section.offset;
+    while (*s) {
+      if (offset >= section.text.size()) break;
+      if (getCharAtOffset(section, offset) != *s) break;
+      s++;
+    }
+    if (*s != '\0') return false;
+    if (endOffset) *endOffset = offset;
+    return true;
+  }
+
+  void skipBackslashNewlines(ScanSection& section) {
+    skipBackslashNewlinesAtOffset(section, section.offset);
+  }
+
+  void skipBackslashNewlinesAtOffset(const ScanSection& section,
+                                     size_t& offset) const {
+    size_t nextOffset = offset;
+    while (nextOffset < section.text.size()) {
+      char32_t ch1 = getCharAtOffset(section, nextOffset, false);
+      if (ch1 != '\\' || nextOffset >= section.text.size()) break;
+      char32_t ch2 = getCharAtOffset(section, nextOffset, false);
+      if (ch2 != '\n') break;
+      offset = nextOffset;
+    }
+  }
+
+  void skipSpacesAndComments() {
+    while (!scanStack.empty()) {
+      ScanSection& section = scanStack.back();
+      size_t endOffset;
+
+      while (section.offset < section.text.size()) {
+        if (isMatchSpace(section, &endOffset)) {
+          section.offset = endOffset;
+        } else if (isMatchString(section, "//", &endOffset)) {
+          section.offset = endOffset;
+          while (section.offset < section.text.size() &&
+                 !isMatchNewline(section, &endOffset)) {
+            getChar(section);
+          }
+          section.offset = endOffset;
+        } else if (isMatchString(section, "/*", &endOffset)) {
+          section.offset = endOffset;
+          while (section.offset < section.text.size() &&
+                 !isMatchString(section, "*/", &endOffset)) {
+            getChar(section);
+          }
+          section.offset = endOffset;
+          if (section.offset >= section.text.size()) {
+            // output not find multiline comment ending.
+          }
+        } else {
+          break;
+        }
+      }
+
+      if (section.offset >= section.text.size()) {
+        exitSection();
+      } else {
+        break;
+      }
+
+      // TODO try replacing isMatchXXX functions with consumeIf, consumeUntil
+      // functions, which needs some advance template skills.
+      //
+      // for example: the code can be refractored to:
+      //
+      // while (offset < text.size()) {
+      //   if (consumeIf<&isSpace>(sv, offset)) {
+      //   } else if (consumeIf<"/*">(sv, offset, "//")) {
+      //     consumeUntil<&isNewline>(sv, offset, true);
+      //   } else if (consumeIf<"/*">(sv, offset)) {
+      //     consumeUntil<"*/">(sv, offset, true);
+      //   } else {
+      //     break;
+      //   }
+      // }
+    }
+  }
 
  public:
   PreprocessingLexer(std::string inputStr, CharDecodeFunc& decodeFunc,
@@ -381,98 +484,53 @@ class PreprocessingLexer {
     skipSpacesAndComments();
   };
 
-  Token getToken();
-  Token peekToken();
-  bool isEof();
-};
+  Token getToken() {
+    char32_t ch;
+    size_t endOffset;
+    ScanSection& section = scanStack.back();
 
-template <CharDecodeFunc CharDecodeFunc>
-Token PreprocessingLexer<CharDecodeFunc>::getToken() {
-  if (scanStack.empty()) {
-    return EofToken{};
-  }
-
-  Token token;
-
-  if (std::optional<Punctuator> punctuator = scanPunctuator()) {
-    token = *punctuator;
-  } else {
-    ScanCursor& cursor = scanStack.back();
-    size_t charlen;
-    size_t oldOffset = cursor.offset;
-    getChar(cursor, &charlen);
-    token = InvalidToken{{cursor.text.substr(oldOffset, charlen)}};
-  }
-
-  skipSpacesAndComments();
-
-  return token;
-}
-
-template <CharDecodeFunc CharDecodeFunc>
-std::optional<Punctuator> PreprocessingLexer<CharDecodeFunc>::scanPunctuator() {
-  if (scanStack.empty()) return std::nullopt;
-
-  for (Punctuator punctuator : punctuatorArraySortedByLenDesc) {
-    ScanCursor& current = scanStack.back();
-    ScanCursor preview = current;
-    bool isMatch = true;
-
-    for (char ch : punctuator.text) {
-      if (isAtEnd(preview) || getChar(preview) != ch) {
-        isMatch = false;
-        break;
-      }
+    if (scanStack.empty()) {
+      return EofToken{};
     }
 
-    if (isMatch) {
-      std::string_view str =
-          current.text.substr(current.offset, preview.offset - current.offset);
-      current = preview;
-      return Punctuator{punctuator.kind, str};
+    if (std::optional<Punctuator> punctuator = scanPunctuator()) {
+      skipSpacesAndComments();
+      return *punctuator;
     }
-  }
 
-  return std::nullopt;
-}
+    ch = peekChar(section, &endOffset);
+    if (std::isalpha(ch) || ch == '_') {
+      auto startOffset = section.offset;
 
-template <CharDecodeFunc CharDecodeFunc>
-inline void PreprocessingLexer<CharDecodeFunc>::skipSpacesAndComments() {
-  while (!scanStack.empty()) {
-    ScanCursor& cursor = scanStack.back();
-    size_t len;
+      do {
+        section.offset = endOffset;
+        ch = peekChar(section, &endOffset);
+      } while (section.offset < section.text.size() &&
+               (std::isdigit(ch) || std::isalpha(ch) || ch == '_'));
 
-    while (!isAtEnd(cursor)) {
-      if (isSpaceAt(cursor, &len)) {
-        cursor.offset += len;
-      } else if (isStringAt(cursor, "//", &len)) {
-        cursor.offset += len;
-        while (!isNewlineAt(cursor, &len)) {
-          getChar(cursor);
-        }
-        cursor.offset += len;
-      } else if (isStringAt(cursor, "/*", &len)) {
-        cursor.offset += len;
-        while (!isStringAt(cursor, "*/", &len)) {
-          getChar(cursor, &len);
-        }
-        cursor.offset += len;
+      std::string_view text =
+          section.text.substr(startOffset, section.offset - startOffset);
+
+      skipSpacesAndComments();
+
+      auto it = std::ranges::find_if(
+          keywordArray, [=](Keyword keyword) { return keyword.text == text; });
+      if (it != std::end(keywordArray)) {
+        return Keyword{it->kind, text};
       } else {
-        break;
+        return Identifier{text};
       }
     }
 
-    if (isAtEnd(cursor)) {
-      exitSection();
-    } else {
-      break;
-    }
+    size_t startOffset = section.offset;
+    getChar(section);
+    skipSpacesAndComments();
+    return InvalidToken{
+        {section.text.substr(startOffset, section.offset - startOffset)}};
   }
-}
 
-template <CharDecodeFunc CharDecodeFunc>
-bool PreprocessingLexer<CharDecodeFunc>::isEof() {
-  return scanStack.empty();
-}
+  Token peekToken();
+  bool isEof() { return scanStack.empty(); }
+};
 
 #endif  // !TPLCC_PP_H

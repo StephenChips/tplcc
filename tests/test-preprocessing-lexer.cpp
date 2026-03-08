@@ -177,3 +177,58 @@ TEST_F(TestPreprocessingLexer, test_comments) {
     FAIL() << "expect to scan a " << PunctuatorKind::PlusAssign;
   }
 }
+
+TEST_F(TestPreprocessingLexer, test_identifiers) {
+  std::vector<std::string> identifiers{"foo", "_foo", "Foo", "foo12",
+                                       "fo\\\no"};
+
+  std::string input;
+  for (size_t i = 0; i < identifiers.size(); i++) {
+    input += identifiers[i];
+    input += " ";
+  }
+
+  setUpPreprocessor(input);
+
+  for (const auto id : identifiers) {
+    auto token = pplex->getToken();
+    auto ident = std::get_if<Identifier>(&token);
+    if (ident) {
+      ASSERT_EQ(ident->text, id);
+    } else {
+      FAIL() << "Expect an identifer " << id << std::endl;
+    }
+  }
+}
+
+TEST_F(TestPreprocessingLexer, test_keywords) {
+  struct KeywordPair {
+    KeywordKind kind;
+    std::string text;
+  };
+
+  std::vector<KeywordPair> identifiers{
+#define X(PascalName, name) {KeywordKind::PascalName, #name},
+      KEYWORDS_X_MACRO_LIST
+#undef X
+  };
+
+  std::string input;
+  for (size_t i = 0; i < identifiers.size(); i++) {
+    input += identifiers[i].text;
+    input += " ";
+  }
+
+  setUpPreprocessor(input);
+
+  for (const auto id : identifiers) {
+    auto token = pplex->getToken();
+    auto ident = std::get_if<Keyword>(&token);
+    if (ident) {
+      ASSERT_EQ(ident->kind, id.kind);
+      ASSERT_EQ(ident->text, id.text);
+    } else {
+      FAIL() << "Expect a keyword " << id.kind << std::endl;
+    }
+  }
+}
