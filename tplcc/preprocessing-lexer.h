@@ -362,10 +362,6 @@ class PreprocessingLexer {
   }
 
   bool isMatchNewline(const ScanSection& section, size_t* endOffset = nullptr) {
-    if (section.offset >= section.text.size()) {
-      return false;
-    }
-
     bool isMatch = false;
     size_t offset = section.offset;
     size_t nextOffset;
@@ -374,8 +370,10 @@ class PreprocessingLexer {
     if (ch == '\r') {
       isMatch = true;
       offset = nextOffset;
-      ch = peekCharAtOffset(section, offset, &nextOffset);
-      if (ch == '\n') offset = nextOffset;
+      if (offset < section.text.size() &&
+          peekCharAtOffset(section, offset, &nextOffset) == '\n') {
+        offset = nextOffset;
+      }
     } else if (ch == '\n') {
       isMatch = true;
       offset = nextOffset;
@@ -486,7 +484,7 @@ class PreprocessingLexer {
 
   Token getToken() {
     char32_t ch;
-    size_t endOffset;
+    size_t next;
     ScanSection& section = scanStack.back();
 
     if (scanStack.empty()) {
@@ -498,13 +496,13 @@ class PreprocessingLexer {
       return *punctuator;
     }
 
-    ch = peekChar(section, &endOffset);
+    ch = peekChar(section, &next);
     if (std::isalpha(ch) || ch == '_') {
       auto startOffset = section.offset;
 
       do {
-        section.offset = endOffset;
-        ch = peekChar(section, &endOffset);
+        section.offset = next;
+        ch = peekChar(section, &next);
       } while (section.offset < section.text.size() &&
                (std::isdigit(ch) || std::isalpha(ch) || ch == '_'));
 
