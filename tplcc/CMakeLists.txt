@@ -5,9 +5,6 @@
 # Add source to this project's executable.
 add_executable (tplcc
 	"tplcc.cpp"
-	"lexer.cpp"
-	"code-buffer.cpp"
-	"preprocessor.h"
 	"preprocessing-lexer.h"
 )
 

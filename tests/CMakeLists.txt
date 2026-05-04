@@ -10,7 +10,6 @@ endif()
 
 
 add_executable(tests-main
-	"mocking/simple-string-scanner.cpp"
 	"test-preprocessing-lexer.cpp")
 
 target_include_directories(tests-main PUBLIC "..")
