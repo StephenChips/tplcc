@@ -4,11 +4,11 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 #include <variant>
 
 #include "diagnostic.h"
@@ -250,30 +250,7 @@ struct MacroDefinition {
   MacroKind kind;
   std::string name;
   std::vector<std::string> parameters;
-  std::string body;
-
-  MacroDefinition(std::string name, std::string body,
-                  MacroKind type = MacroKind::ObjectLikeMacro)
-      : name(std::move(name)), body(std::move(body)), kind(type) {};
-
-  MacroDefinition(std::string name, std::vector<std::string> parameters,
-                  std::string body,
-                  MacroKind kind = MacroKind::FunctionLikeMacro)
-      : name(std::move(name)),
-        body(std::move(body)),
-        parameters(std::move(parameters)),
-        kind(kind) {};
-
-  bool operator==(const MacroDefinition& other) const {
-    return this->name == other.name;
-  }
-};
-
-template <>
-struct std::hash<MacroDefinition> {
-  size_t operator()(const MacroDefinition& macroDef) const noexcept {
-    return std::hash<std::string>{}(macroDef.name);
-  }
+  std::string_view body;
 };
 
 template <CharDecodeFunc CharDecodeFunc>
@@ -292,14 +269,16 @@ class PreprocessingLexer {
   ScanStack scanStack;
   std::string input;
 
-  std::unordered_set<MacroDefinition> macroDefs;
+  std::map<std::string, MacroDefinition> macroDefDict;
 
   bool isAtLineStart;
 
-  void enterSection(std::string_view text) {
-    ScanSection section = initScanSection(text);
-    if (section.offset >= section.text.size()) return;
+  bool enterSection(std::string_view text) {
+    ScanSection section{text, 0};
+    skipSpacesAndComments(section);
+    if (section.offset == section.text.size()) return false;
     scanStack.push_back(section);
+    return true;
   }
 
   void exitSection() { scanStack.pop_back(); }
@@ -344,12 +323,6 @@ class PreprocessingLexer {
   bool isNewlineCharacter(char32_t ch) { return ch == '\r' || ch == '\n'; }
 
   bool isOctDigit(char32_t ch) { return ch >= '0' && ch <= '7'; }
-
-  ScanSection initScanSection(std::string_view text) {
-    ScanSection cursor{text, 0};
-    skipBackslashNewlines(cursor);
-    return cursor;
-  }
 
   char32_t getChar(ScanSection& section,
                    bool willSkipBackslashNewlines = true) const {
@@ -400,7 +373,7 @@ class PreprocessingLexer {
       offset = nextOffset;
     }
 
-    if (isMatch && endOffset) {
+    if (endOffset) {
       *endOffset = offset;
     }
 
@@ -447,36 +420,21 @@ class PreprocessingLexer {
     }
   }
 
-  void skipNonNewlineSpaces(ScanSection& section) {
-    size_t endOffset;
-    while (section.offset < section.text.size()) {
-      if (isMatchNonNewlineSpace(section, &endOffset)) {
-        section.offset = endOffset;
-      } else {
-        break;
-      }
-    }
-  }
-
-  void skipSpacesAndComments() {
+  void skipSpacesAndComments(ScanSection& section, bool multiline = true) {
     while (!scanStack.empty()) {
       ScanSection& section = scanStack.back();
       size_t endOffset;
 
       while (section.offset < section.text.size()) {
         if (isMatchNewline(section, &endOffset)) {
+          if (multiline) break;
           section.offset = endOffset;
           isAtLineStart = true;
         } else if (isMatchNonNewlineSpace(section, &endOffset)) {
           section.offset = endOffset;
         } else if (isMatchString(section, "//", &endOffset)) {
           section.offset = endOffset;
-          while (section.offset < section.text.size() &&
-                 !isMatchNewline(section, &endOffset)) {
-            getChar(section);
-          }
-          section.offset = endOffset;
-          isAtLineStart = true;
+          skipToNextLine(section);
         } else if (isMatchString(section, "/*", &endOffset)) {
           size_t startOfComment = section.offset;
           size_t afterCommentStart = endOffset;
@@ -496,12 +454,6 @@ class PreprocessingLexer {
         } else {
           break;
         }
-      }
-
-      if (section.offset >= section.text.size()) {
-        exitSection();
-      } else {
-        break;
       }
 
       // TODO try replacing isMatchXXX functions with consumeIf, consumeUntil
@@ -1292,7 +1244,6 @@ class PreprocessingLexer {
         diagnostics(diagnostics),
         isAtLineStart(true) {
     enterSection(input);
-    skipSpacesAndComments();
   };
 
   bool isIdentifierNonDigitCharacter(char32_t codepoint) {
@@ -1305,41 +1256,52 @@ class PreprocessingLexer {
     return std::isdigit(ch) || isIdentifierNonDigitCharacter(ch);
   }
 
+  bool isIdentifier(std::string_view sv) {
+    if (sv.size() == 0) return false;
+    if (!isIdentifierNonDigitCharacter(sv[0])) return false;
+
+    for (size_t i = 1; i < sv.size(); i++) {
+      if (!isIdentifierCharacter(sv[i])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   bool isMatchIdentifierCharacter(const ScanSection& section,
                                   size_t* endOffset) {
     return isIdentifierCharacter(peekChar(section, endOffset));
   }
 
-  std::optional<std::string_view> parseIdentifierStringView(
-      ScanSection& section) {
-    size_t startOffset = section.offset;
+  void skipToNextLine(ScanSection& section) {
     size_t endOffset;
-    if (section.offset < section.text.size() &&
-        !isMatchIdentifierNonDigitCharacter(section, &endOffset)) {
-      return std::nullopt;
+    while (section.offset < section.text.size() &&
+           !isMatchNewline(section, &endOffset)) {
+      getChar(section);
     }
     section.offset = endOffset;
-
-    while (isMatchIdentifierCharacter(section, &endOffset)) {
-      section.offset = endOffset;
-    }
-
-    return slice(section.text, startOffset, section.offset);
+    isAtLineStart = true;
   }
 
   // TODO wip
+  // TODO remember to add test where #define spans multiple lines
   void scanDirective() {
     assert(!scanStack.empty());
+
+    MacroDefinition newDef;
+    newDef.kind = MacroKind::ObjectLikeMacro;
+
     ScanSection& section = scanStack.back();
 
     char32_t ch = getChar(section);
     assert(ch == '#');
 
-    skipNonNewlineSpaces(section);
+    skipSpacesAndComments(section, false);
 
     size_t endOffset = section.offset;
     size_t directiveNameStart = section.offset;
-    while (!isMatchSpace(section, &endOffset)) {
+    while (!isMatchNonNewlineSpace(section, &endOffset)) {
       section.offset = endOffset;
     }
 
@@ -1347,59 +1309,119 @@ class PreprocessingLexer {
         slice(section.text, directiveNameStart, section.offset);
 
     if (directiveName == "define") {
-      skipNonNewlineSpaces(section);
+      skipSpacesAndComments(section, false);
 
       if (section.offset == section.text.size() || isMatchNewline(section)) {
-        // TODO nothing after "define", output an error to diagnositc
-        goto cleanUp;
+        // TODO add test for this error.
+        diagnostics.report({DiagnosticLevel::Error,
+                            {section.offset, section.offset},
+                            "incomplete #define directive"});
+        skipToNextLine(section);
+        return;
       }
 
       size_t macroNameStart = section.offset;
-      std::optional<std::string_view> macroName =
-          parseIdentifierStringView(section);
-
-      if (macroName == std::nullopt) {
-        // TODO skip until end of line and reports an error.
-        goto cleanUp;
+      while (section.offset < section.text.size() &&
+             !isMatchSpace(section, &endOffset)) {
+        section.offset = endOffset;
+      }
+      newDef.name = slice(section.text, macroNameStart, section.offset);
+      if (!isIdentifier(newDef.name)) {
+        // TODO write test for this error.
+        diagnostics.report({DiagnosticLevel::Error,
+                            {macroNameStart, section.offset},
+                            "macro name must be an identifier"});
+        skipToNextLine(section);
+        return;
       }
 
-      skipNonNewlineSpaces(section);
+      skipSpacesAndComments(section, false);
 
-      size_t endOffset;
-      if (section.offset < section.text.size() && peekChar(section) == '(') {
-        // TODO parse the parenthesis list and set the macro kind to
-        // "FunctionLikeMacro".
-        skipNonNewlineSpaces(section);
+      if (section.offset < section.text.size() &&
+          peekChar(section, &endOffset) == '(') {
+        section.offset = endOffset;
+
+        for (;;) {
+          if (!newDef.parameters.empty()) {
+            ch = peekChar(section, &endOffset);
+            if (ch == ',') {
+              section.offset = endOffset;
+            } else if (ch == ')') {
+              section.offset = endOffset;
+              break;
+            } else {
+              std::string message = "expected ',' or ')', found '";
+              // TODO ch is a char32_t, and if the ch is a multibyte
+              // character (larger than 256) the value is truncated
+              // after pushed to the message string.
+              //
+              // This involve the display encoding, which will be
+              // solve later.
+              message.push_back(static_cast<char>(ch));
+              message += "'";
+              diagnostics.report({DiagnosticLevel::Error,
+                                  {section.offset, endOffset},
+                                  std::move(message)});
+              skipToNextLine(section);
+              return;
+            }
+          } else if (peekChar(section, &endOffset) == ')') {
+            section.offset = endOffset;
+            break;
+          }
+
+          skipSpacesAndComments(section, false);
+          ch = peekChar(section, &endOffset);
+          if (!isIdentifierNonDigitCharacter(ch)) {
+            // not a valid ch, report an error and quit.
+            std::string message = "expected parameter name, found ";
+            message.push_back(static_cast<char>(ch));
+            diagnostics.report({DiagnosticLevel::Error,
+                                {section.offset, endOffset},
+                                std::move(message)});
+            skipToNextLine(section);
+            return;
+          }
+
+          size_t startOfParamterName = section.offset;
+          while (section.offset < section.text.size() &&
+                 isMatchIdentifierCharacter(section, &endOffset)) {
+            section.offset = endOffset;
+          }
+          std::string parameterName = std::string{
+              slice(section.text, startOfParamterName, section.offset)};
+          auto iter = std::ranges::find(newDef.parameters, parameterName);
+          if (iter != newDef.parameters.end()) {
+            // TODO write test for this error.
+            diagnostics.report(
+                {DiagnosticLevel::Error,
+                 {startOfParamterName, section.offset},
+                 "duplicate macro paramter name '" + parameterName + "'"});
+            skipToNextLine(section);
+            return;
+          }
+
+          newDef.parameters.push_back(std::move(parameterName));
+          skipSpacesAndComments(section, false);
+        }
+
+        newDef.kind = MacroKind::FunctionLikeMacro;
       }
 
-      std::string_view macroContent;
-
-      // skip all the way to the end of line.
+      skipSpacesAndComments(section, false);
 
       size_t startOfMacroBody = section.offset;
-
       while (section.offset < section.text.size() &&
              !isMatchNewline(section, &endOffset)) {
         getChar(section, &endOffset);
       }
+      section.offset = endOffset;
+      newDef.body = slice(section.text, startOfMacroBody, section.offset);
 
-      // Function `isMatchNewline` is called before loop breaks, unless the
-      // cursor reaches the end, so the endOffset is curtainly updated to the
-      // newest value.
-      if (section.offset < section.text.size()) {
-        section.offset = endOffset;
-      }
-
-      // TODO At last we store the macro to the macro dictionary.
-
+      macroDefDict.insert({newDef.name, newDef});
     } else {
-      // Handle illegal directive.
+      // TODO Handle other directives.
     }
-
-  cleanUp:
-    // TODO if the cursor is pointing to a newline character, skip it to jump to
-    // next line, then quit.
-    return;
   }
 
   Token getToken() {
@@ -1453,7 +1475,7 @@ class PreprocessingLexer {
             {DiagnosticLevel::Error, {startOffset, section.offset}, message});
       }
 
-      skipSpacesAndComments();
+      skipSpacesAndComments(section);
 
       if (result.kind == NumberTextScanResult::NumberKind::Int) {
         return IntegerConstant{
@@ -1473,7 +1495,7 @@ class PreprocessingLexer {
     }
 
     if (std::optional<Punctuator> punctuator = scanPunctuator()) {
-      skipSpacesAndComments();
+      skipSpacesAndComments(section);
 
       return *punctuator;
     }
@@ -1507,7 +1529,7 @@ class PreprocessingLexer {
         }
       }
 
-      skipSpacesAndComments();
+      skipSpacesAndComments(section);
 
       auto it = std::ranges::find_if(
           keywordArray, [=](Keyword keyword) { return keyword.text == text; });
@@ -1531,7 +1553,7 @@ class PreprocessingLexer {
 
     size_t startOffset = section.offset;
     getChar(section);
-    skipSpacesAndComments();
+    skipSpacesAndComments(section);
     std::string_view text = slice(section.text, startOffset, section.offset);
     return InvalidToken{text};
   }
