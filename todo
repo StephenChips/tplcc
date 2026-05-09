@@ -6,6 +6,69 @@
 
 **`define` directives and macro expansion**
 
-- [ ] Sketch the process of parsing #define directives and macro expansions (first attempt) and arrange tasks accordingly.
-    - [ ] Sketch the proecess of parsing `#define` directive
-    - [ ] Sketch the process of macro expansion
+- [x] Sketch the process of parsing #define directives and macro expansions (first attempt) and arrange tasks accordingly.
+    - [x] Sketch the proecess of parsing `#define` directive
+    - [x] Sketch the process of macro expansion
+- [ ] Parse `#define` directive
+    - [x] Add the flag `isAtLineStart` and write code that maintain its status.
+    - [ ] Parse the `#define` directive to create a new macro.
+- [ ] Macro expansion
+    - ???
+
+## parse `#define` directive 
+
+Storage:
+
+A `std::map` to store the definitions of the macro, which is defined as:
+
+```c++
+enum class MacroKind {
+    ObjectLikeMacro,
+    FunctionLikeMacro
+};
+
+struct MacroDef {
+    MacroKind kind;
+    std::string name;
+    std::vector<std::string_view> arguments;
+};
+```
+
+Rough process:
+
+first we need a flag (`isAtLineStart`) to determine if we can parse preprocessing directives, i.e., the cursor is at the beginning of a newline, and we are scanning a file (either origin or a included file), not a macro. 
+
+Method `parseDirective` is called when `isAtLineStart` is true and the cursor points at a `#` character. Inside the function we skip the `#` at the start, and parse the word right after it. If the word is `define` we will skip it and start parsing a new macro definition. After all spaces after the word `define` is the macro's name and optional the parameters. After parsing the name namd param list we can determine the macro's name and parameter, then we find the first non-space character, mark the position as `startPos`, skip until we scan a newline sequence, marked as `endPos`, then we create the macro body (a `std::string_view.`) with these two positions.
+
+## macro expansion
+
+After a macro is scanned (a name and optionally a argument list proceeded it), we push a new frame to the scan stack. The frame's defined as follow:
+```c++
+struct MacroExpansionFrame {
+    MacroDef *def; // a pointer to the definition of the macro
+    std::vector<std::string_view> arguments;
+    // text after `#` and `##` evaluation.
+    // Maybe it should be a vector of tokens?
+    std::string buffer 
+    ScanSection section;
+};
+```
+
+**Step One**: identify a macro and its parameters.
+
+After we scan a identifier we should check if it is a macro, i.e., to check if the name is defined in the **macro dictionary**. If it is defined:
+
+- Check the macro's kind: 
+- If it is a FunctionLikeMacro, we should check if the current cursor points to a `(`, i.e., the start of an argument list. 
+    - If the cursor points to a `(`, we **parse the argument list** then go to step two.
+    - If the cursor doesn't point to a `(`, the macro is not expanded.
+- If it is a ObjectLikeMacro, we should expand it immediately.
+
+**Step Two**: expand the macro
+
+First, we should setup a new scanning frame and push it to the scan stack, then we perform two scans to exapnd the macro:
+
+first pass:
+    We evaluate all `#` and `##` operators, resulting a **temporary `std::string_view`** that will be scanned at the second pass.
+second pass:
+    Recursively, we scan through the temporary `std::string_view` and produce tokens and expand nested macro inside it.

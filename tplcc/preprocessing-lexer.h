@@ -294,6 +294,8 @@ class PreprocessingLexer {
 
   std::unordered_set<MacroDefinition> macroDefs;
 
+  bool isAtLineStart;
+
   void enterSection(std::string_view text) {
     ScanSection section = initScanSection(text);
     if (section.offset >= section.text.size()) return;
@@ -335,12 +337,11 @@ class PreprocessingLexer {
     return ch == ' ' || ch == '\f' || ch == '\n' || ch == '\r' || ch == '\t' ||
            ch == '\v';
   }
+  bool isNonNewlineSpace(char32_t ch) {
+    return ch == ' ' || ch == '\f' || ch == '\t' || ch == '\v';
+  }
   bool isDirectiveSpace(char32_t ch) { return ch == ' ' || ch == '\t'; }
   bool isNewlineCharacter(char32_t ch) { return ch == '\r' || ch == '\n'; }
-
-  bool isStartOfIdentifier(char32_t ch) {
-    return ch == '_' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z';
-  }
 
   bool isOctDigit(char32_t ch) { return ch >= '0' && ch <= '7'; }
 
@@ -411,6 +412,12 @@ class PreprocessingLexer {
     return isSpace(ch);
   }
 
+  bool isMatchNonNewlineSpace(const ScanSection& section,
+                              size_t* endOffset = nullptr) {
+    size_t ch = peekChar(section, endOffset);
+    return isNonNewlineSpace(ch);
+  }
+
   bool isMatchString(const ScanSection& section, const char* s,
                      size_t* endOffset = nullptr) {
     size_t offset = section.offset;
@@ -440,13 +447,27 @@ class PreprocessingLexer {
     }
   }
 
+  void skipNonNewlineSpaces(ScanSection& section) {
+    size_t endOffset;
+    while (section.offset < section.text.size()) {
+      if (isMatchNonNewlineSpace(section, &endOffset)) {
+        section.offset = endOffset;
+      } else {
+        break;
+      }
+    }
+  }
+
   void skipSpacesAndComments() {
     while (!scanStack.empty()) {
       ScanSection& section = scanStack.back();
       size_t endOffset;
 
       while (section.offset < section.text.size()) {
-        if (isMatchSpace(section, &endOffset)) {
+        if (isMatchNewline(section, &endOffset)) {
+          section.offset = endOffset;
+          isAtLineStart = true;
+        } else if (isMatchNonNewlineSpace(section, &endOffset)) {
           section.offset = endOffset;
         } else if (isMatchString(section, "//", &endOffset)) {
           section.offset = endOffset;
@@ -455,6 +476,7 @@ class PreprocessingLexer {
             getChar(section);
           }
           section.offset = endOffset;
+          isAtLineStart = true;
         } else if (isMatchString(section, "/*", &endOffset)) {
           size_t startOfComment = section.offset;
           size_t afterCommentStart = endOffset;
@@ -500,8 +522,8 @@ class PreprocessingLexer {
     }
   }
 
-  bool isMatchIdentifierNonDigit(const ScanSection& section,
-                                 size_t* endOffset = nullptr) {
+  bool isMatchIdentifierNonDigitCharacter(const ScanSection& section,
+                                          size_t* endOffset = nullptr) {
     size_t pos = section.offset;
     char32_t ch = getCharAtOffset(section, pos);
     char32_t codepoint;
@@ -519,6 +541,14 @@ class PreprocessingLexer {
         // TODO refine crude impl
         return false;
       }
+
+      // TODO we should test if the value of the hex quad is a valid unicode
+      // codepoint.
+      //
+      // For example \U33333333 exceeded unicode's range (max 0x10FFF) so it is
+      // not a valid codepoint, and both gcc and clang don't support \U0010FFFD
+      // as an valid identifier character. Probably because it is in the Plane
+      // 16 (Supplementary Private Use Area-B)
     } else {
       codepoint = ch;
     }
@@ -531,9 +561,7 @@ class PreprocessingLexer {
      *
      * [https://github.com/unicode-org/icu/tree/main/icu4c](icu4c)
      */
-    return codepoint == '_' || codepoint >= 'A' && codepoint <= 'Z' ||
-           codepoint >= 'a' && codepoint <= 'z' ||
-           isValidUniversalCharacterNameCodepoint(codepoint);
+    return isIdentifierNonDigitCharacter(ch);
   }
 
   bool skipQuotedLiteralContent(ScanSection& section,
@@ -763,7 +791,7 @@ class PreprocessingLexer {
         }
       } else if (ch == '.') {
         section.offset = endOffset;
-      } else if (isMatchIdentifierNonDigit(section, &endOffset)) {
+      } else if (isMatchIdentifierNonDigitCharacter(section, &endOffset)) {
         section.offset = endOffset;
       } else if (ch == '\\') {
         if (endOffset >= section.text.size()) break;
@@ -1261,10 +1289,118 @@ class PreprocessingLexer {
                      Diagnostic& diagnostics)
       : input(std::move(inputStr)),
         decodeFunc(decodeFunc),
-        diagnostics(diagnostics) {
+        diagnostics(diagnostics),
+        isAtLineStart(true) {
     enterSection(input);
     skipSpacesAndComments();
   };
+
+  bool isIdentifierNonDigitCharacter(char32_t codepoint) {
+    return codepoint == '_' || codepoint >= 'A' && codepoint <= 'Z' ||
+           codepoint >= 'a' && codepoint <= 'z' ||
+           isValidUniversalCharacterNameCodepoint(codepoint);
+  }
+
+  bool isIdentifierCharacter(char32_t ch) {
+    return std::isdigit(ch) || isIdentifierNonDigitCharacter(ch);
+  }
+
+  bool isMatchIdentifierCharacter(const ScanSection& section,
+                                  size_t* endOffset) {
+    return isIdentifierCharacter(peekChar(section, endOffset));
+  }
+
+  std::optional<std::string_view> parseIdentifierStringView(
+      ScanSection& section) {
+    size_t startOffset = section.offset;
+    size_t endOffset;
+    if (section.offset < section.text.size() &&
+        !isMatchIdentifierNonDigitCharacter(section, &endOffset)) {
+      return std::nullopt;
+    }
+    section.offset = endOffset;
+
+    while (isMatchIdentifierCharacter(section, &endOffset)) {
+      section.offset = endOffset;
+    }
+
+    return slice(section.text, startOffset, section.offset);
+  }
+
+  // TODO wip
+  void scanDirective() {
+    assert(!scanStack.empty());
+    ScanSection& section = scanStack.back();
+
+    char32_t ch = getChar(section);
+    assert(ch == '#');
+
+    skipNonNewlineSpaces(section);
+
+    size_t endOffset = section.offset;
+    size_t directiveNameStart = section.offset;
+    while (!isMatchSpace(section, &endOffset)) {
+      section.offset = endOffset;
+    }
+
+    std::string_view directiveName =
+        slice(section.text, directiveNameStart, section.offset);
+
+    if (directiveName == "define") {
+      skipNonNewlineSpaces(section);
+
+      if (section.offset == section.text.size() || isMatchNewline(section)) {
+        // TODO nothing after "define", output an error to diagnositc
+        goto cleanUp;
+      }
+
+      size_t macroNameStart = section.offset;
+      std::optional<std::string_view> macroName =
+          parseIdentifierStringView(section);
+
+      if (macroName == std::nullopt) {
+        // TODO skip until end of line and reports an error.
+        goto cleanUp;
+      }
+
+      skipNonNewlineSpaces(section);
+
+      size_t endOffset;
+      if (section.offset < section.text.size() && peekChar(section) == '(') {
+        // TODO parse the parenthesis list and set the macro kind to
+        // "FunctionLikeMacro".
+        skipNonNewlineSpaces(section);
+      }
+
+      std::string_view macroContent;
+
+      // skip all the way to the end of line.
+
+      size_t startOfMacroBody = section.offset;
+
+      while (section.offset < section.text.size() &&
+             !isMatchNewline(section, &endOffset)) {
+        getChar(section, &endOffset);
+      }
+
+      // Function `isMatchNewline` is called before loop breaks, unless the
+      // cursor reaches the end, so the endOffset is curtainly updated to the
+      // newest value.
+      if (section.offset < section.text.size()) {
+        section.offset = endOffset;
+      }
+
+      // TODO At last we store the macro to the macro dictionary.
+
+    } else {
+      // Handle illegal directive.
+    }
+
+  cleanUp:
+    // TODO if the cursor is pointing to a newline character, skip it to jump to
+    // next line, then quit.
+    return;
+  }
 
   Token getToken() {
     char32_t ch;
@@ -1275,6 +1411,12 @@ class PreprocessingLexer {
       return EofToken{};
     }
     ch = peekChar(section, &nextOffset);
+
+    while (ch == '#') {
+      scanDirective();
+    }
+
+    isAtLineStart = false;
 
     if (std::isdigit(ch) ||
         ch == '.' && section.offset < section.text.size() &&
@@ -1325,20 +1467,26 @@ class PreprocessingLexer {
         this->diagnostics.report({DiagnosticLevel::Error,
                                   {startOffset, section.offset},
                                   "invalid number literal"});
+
         return InvalidToken{result.text};
       }
     }
 
     if (std::optional<Punctuator> punctuator = scanPunctuator()) {
       skipSpacesAndComments();
+
       return *punctuator;
     }
 
+    // TODO FIXME incorrect predicate for the do-while loop.
+    // should use isMatchIdentifierNonDigit to replace std::isalpha(ch) || ch ==
+    // '_'. also it is probably not correct to assign nextOffset to
+    // section.offset when entering the loop.
     if (std::isalpha(ch) || ch == '_') {
       size_t startOffset = section.offset;
 
       do {
-        section.offset = nextOffset;
+        section.offset = nextOffset;  // HERE, I suspect it is incorrect.
         ch = peekChar(section, &nextOffset);
       } while (section.offset < section.text.size() &&
                (std::isdigit(ch) || std::isalpha(ch) || ch == '_'));
