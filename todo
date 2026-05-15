@@ -11,9 +11,12 @@
     - [x] Sketch the process of macro expansion
 - [ ] Parse `#define` directive
     - [x] Add the flag `isAtLineStart` and write code that maintain its status.
-    - [ ] Parse the `#define` directive to create a new macro.
+    - [x] Parse the `#define` directive to create a new macro.
+    - [ ] Checks `#` and `##` operators' validity
 - [ ] Macro expansion
-    - ???
+    - [ ] Evaluate `#` and `##` operators, forming a new `std::string_view` for scanning.
+- [ ] Handle pushing and pop frames
+    - [x] After scanned a token we should pop the frame out of the scan stack if the frame has been fully scanned.
 
 ## parse `#define` directive 
 
@@ -38,7 +41,7 @@ Rough process:
 
 first we need a flag (`isAtLineStart`) to determine if we can parse preprocessing directives, i.e., the cursor is at the beginning of a newline, and we are scanning a file (either origin or a included file), not a macro. 
 
-Method `parseDirective` is called when `isAtLineStart` is true and the cursor points at a `#` character. Inside the function we skip the `#` at the start, and parse the word right after it. If the word is `define` we will skip it and start parsing a new macro definition. After all spaces after the word `define` is the macro's name and optional the parameters. After parsing the name namd param list we can determine the macro's name and parameter, then we find the first non-space character, mark the position as `startPos`, skip until we scan a newline sequence, marked as `endPos`, then we create the macro body (a `std::string_view.`) with these two positions.
+Method `parseDirective` is called when `isAtLineStart` is true and the cursor points at a `#` character. Inside the function we skip the `#` at the start, and parse the word right after it. If the word is `define` we will skip it and start parsing a new macro definition. After all spaces after the word `define` is the macro's name and optional the parameters. After parsing the name namd param list we can determine the macro's name and parameter, then we find the first non-space character, mark the position as `startPos`, skip until we scan a newline sequence, marked as `endPos`, then we create the macro body (a `std::string_view`) with these two positions.
 
 ## macro expansion
 
@@ -49,8 +52,8 @@ struct MacroExpansionFrame {
     std::vector<std::string_view> arguments;
     // text after `#` and `##` evaluation.
     // Maybe it should be a vector of tokens?
-    std::string buffer 
-    ScanSection section;
+    std::string buffer;
+    ScanSection section; // the section.text is the buffer
 };
 ```
 
@@ -72,3 +75,40 @@ first pass:
     We evaluate all `#` and `##` operators, resulting a **temporary `std::string_view`** that will be scanned at the second pass.
 second pass:
     Recursively, we scan through the temporary `std::string_view` and produce tokens and expand nested macro inside it.
+
+**2026/5/11**
+
+Discovered that GCC/Clang reports an error when `#` isn't followed by a macro parameter, and `##` synthesizes an invalid preprocessing even if the macro is not used.
+
+This means I should do an additional check while scanning the text. We could tokenize the macro body but I think that makes the code more complicated. If we tokenize the text, it wouldn't be solely for this check; otherwise it is not worth the hassle. Once we have a list of (or a stream of) tokens, we should store it and later directly use it to output tokens, skipping the process of scanning the text. However this also means `getToken` needs to handle two kinds of input: a list of (or a stream of) tokens and a `std::string_view`. Maybe such an approach is more efficient, but it is harder to implement. 
+
+[TASK] [TODO] *Currently we can match `#` and `#` while scanning, and check if it is followed by a parameter name (optionally separated by non newline spaces).*
+
+How? By the function `validateMacroOperators`:
+
+This function will tokenize the text, and check if the `#` and `##` is valid. The pseudocode is:
+
+```
+while 
+```
+
+This function will parse tokens 
+
+We should further refine the process above
+
+First, we should only evaluate `#` when we are scanning a function like 
+
+
+Today's commit:
+
+Add code that handles pushing 
+
+Change the `text` field in every token type from `std::string_view` to `std::string` with related code adjustments:
+
+1. Change the list `punctuatorArraySortedByLenDesc` to `listOfEveryPunctuator`. Since `std::string` cannot be `constexpr`, the list is no longer `constexpr`, and if it is not a `constexpr`, there is no reason to use `std::array`. Therefore change its type to `std::vector`, and wraps the creation process into a function.
+2. 
+
+Delete the `input` member in the `PreprocessingLexer` class.
+
+Fixed bugs:
+pushFileFrame 

@@ -51,7 +51,7 @@ class TestPreprocessingLexer : public ::testing::Test {
     return exhaustTokens();
   }
 
-  void setUpPreprocessor(const std::string& inputStr) {
+  void setUpPreprocessor(std::string inputStr) {
     diag = std::make_unique<DiagnosticStub>();
     pplex = std::make_unique<PreprocessingLexer<decltype(decodeUTF8)>>(
         inputStr, decodeUTF8, *diag);
