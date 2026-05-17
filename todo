@@ -91,24 +91,3 @@ This function will tokenize the text, and check if the `#` and `##` is valid. Th
 ```
 while 
 ```
-
-This function will parse tokens 
-
-We should further refine the process above
-
-First, we should only evaluate `#` when we are scanning a function like 
-
-
-Today's commit:
-
-Add code that handles pushing 
-
-Change the `text` field in every token type from `std::string_view` to `std::string` with related code adjustments:
-
-1. Change the list `punctuatorArraySortedByLenDesc` to `listOfEveryPunctuator`. Since `std::string` cannot be `constexpr`, the list is no longer `constexpr`, and if it is not a `constexpr`, there is no reason to use `std::array`. Therefore change its type to `std::vector`, and wraps the creation process into a function.
-2. 
-
-Delete the `input` member in the `PreprocessingLexer` class.
-
-Fixed bugs:
-pushFileFrame 
