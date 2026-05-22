@@ -12,7 +12,7 @@
 - [ ] Parse `#define` directive
     - [x] Add the flag `isAtLineStart` and write code that maintain its status.
     - [x] Parse the `#define` directive to create a new macro.
-    - [ ] Checks `#` and `##` operators' validity
+    - [x] Checks `#` and `##` operators' validity
 - [ ] Macro expansion
     - [ ] Evaluate `#` and `##` operators, forming a new `std::string_view` for scanning.
 - [ ] Handle pushing and pop frames

@@ -16,7 +16,8 @@
  */
 
 struct DiagnosticStub : Diagnostic {
-  virtual void report(DiagnosticInfo info) {}
+  std::vector<DiagnosticInfo> collectedInfos;
+  virtual void report(DiagnosticInfo info) { collectedInfos.push_back(info); }
 };
 
 std::ostream& operator<<(std::ostream& os, PunctuatorKind kind) {
@@ -44,7 +45,7 @@ std::ostream& operator<<(std::ostream& os, KeywordKind kind) {
 class TestPreprocessingLexer : public ::testing::Test {
  protected:
   std::unique_ptr<PreprocessingLexer<decltype(decodeUTF8)>> pplex;
-  std::unique_ptr<Diagnostic> diag;
+  std::unique_ptr<DiagnosticStub> diag;
 
   std::vector<Token> scanInput(const std::string& inputStr) {
     setUpPreprocessor(inputStr);
@@ -417,3 +418,63 @@ TEST_F(TestPreprocessingLexer, test_character_constant) {
 
   // TODO Add more tests on character escaping and error (diagnostic) output.
 }
+
+#define NOT_FOLLOW_BY_MACRO_PARAMETER          \
+  Expected{DiagnosticLevel::Error,             \
+           "\"#\" is not followed by a macro " \
+           "parameter"}
+
+TEST_F(TestPreprocessingLexer, test_invalid_define_directive) {
+  struct Expected {
+    DiagnosticLevel expectedLevel;
+    std::string expectedMsg;
+  };
+
+  auto testInvalid = [&, this](std::string input, Expected expected) {
+    setUpPreprocessor(input);
+
+    while (!std::holds_alternative<EofToken>(pplex->getToken()));
+
+    ASSERT_EQ(diag->collectedInfos.size(), 1);
+    ASSERT_EQ(diag->collectedInfos[0].level, expected.expectedLevel);
+    ASSERT_EQ(diag->collectedInfos[0].message, expected.expectedMsg);
+  };
+
+  testInvalid("#define   ",
+              {DiagnosticLevel::Error, "incomplete #define directive"});
+  testInvalid("#define ###(a) ###",
+              {DiagnosticLevel::Error, "macro name must be an identifier"});
+  testInvalid("#define A(a,    ",
+              {DiagnosticLevel::Error, "incomplete #define directive"});
+  testInvalid(
+      "#define A(a,    \n"
+      "abc",
+      {DiagnosticLevel::Error, "incomplete #define directive"});
+  testInvalid("#define A(a ",
+              {DiagnosticLevel::Error, "incomplete #define directive"});
+  testInvalid("#define A(a # ",
+              {DiagnosticLevel::Error, "expected ',' or ')', found \"#\""});
+
+  testInvalid("#define A(,,) ",
+              {DiagnosticLevel::Error, "expected a parameter name"});
+
+  testInvalid("#define A#",
+              {DiagnosticLevel::Warning,
+               "ISO C99 requires whitespace after the macro name"});
+
+  testInvalid("#define A(a) #", NOT_FOLLOW_BY_MACRO_PARAMETER);
+  testInvalid("#define A(a) #=", NOT_FOLLOW_BY_MACRO_PARAMETER);
+  testInvalid("#define A(a) #   =", NOT_FOLLOW_BY_MACRO_PARAMETER);
+
+  testInvalid("#define A ## a",
+              {DiagnosticLevel::Error,
+               "\"##\" cannot appear at the start of macro expansion"});
+  testInvalid("#define A a ##",
+              {DiagnosticLevel::Error,
+               "\"##\" cannot appear at the end of macro expansion"});
+
+  testInvalid("#define A(a, a)",
+              {DiagnosticLevel::Error, "duplicate macro parameter name 'a'"});
+}
+
+#undef NOT_FOLLOW_BY_MACRO_PARAMETER

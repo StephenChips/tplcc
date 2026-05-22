@@ -14,6 +14,11 @@
 #include "diagnostic.h"
 #include "encoding.h"
 
+/**
+ * TODO Need a complete redesign of the source location system.
+ * Currently the source code location in error outputs is not all correct.
+ */
+
 #define KEYWORDS_X_MACRO_LIST \
   X(Bool, _Bool)              \
   X(Complex, _Complex)        \
@@ -191,6 +196,15 @@ struct IntegerConstant {
   bool operator==(const IntegerConstant&) const = default;
 };
 
+struct PPNumber {
+  std::string text;
+  bool operator==(const PPNumber&) const = default;
+};
+
+struct HeaderName {
+  std::string text;
+};
+
 struct FloatingConstant {
   bool isValid;
   InvalidNumberReason invalidReason;
@@ -216,6 +230,9 @@ struct InvalidToken {
 };
 
 struct EofToken {
+  // A EofToken's text carries no meaning.
+  // It exists solely to simplify to process of handling token's text.
+  std::string text;
   bool operator==(const EofToken&) const = default;
 };
 
@@ -252,6 +269,18 @@ using ScanStackFrame = std::variant<FileFrame, MacroFrame>;
 using Token = std::variant<Keyword, Identifier, StringLiteral, FloatingConstant,
                            IntegerConstant, CharacterConstant, Punctuator,
                            InvalidToken, EofToken>;
+
+using PreprocessingToken =
+    std::variant<HeaderName, Identifier, PPNumber, CharacterConstant,
+                 Punctuator, StringLiteral, Keyword, InvalidToken>;
+
+std::string& getTokenText(PreprocessingToken& token) {
+  return std::visit([](auto& t) -> std::string& { return t.text; }, token);
+}
+
+std::string& getTokenText(Token& token) {
+  return std::visit([](auto& t) -> std::string& { return t.text; }, token);
+}
 
 #define X(PascalName, name) {KeywordKind::PascalName, #name},
 constexpr std::array<Keyword, keywordKindCount> keywordArray{
@@ -397,6 +426,149 @@ class PreprocessingLexer {
     char32_t ch = getCharAtOffset(section, offset, willSkipBackslashNewlines);
     if (endOffset) *endOffset = offset;
     return ch;
+  }
+
+  struct ResultOfScanPPNumberText {
+    std::string_view text;
+    bool hasInvalidUCN;  // UCN: Universal Character Name
+  };
+
+  ResultOfScanPPNumberText scanPPNumberText(ScanSection& section) {
+    size_t startOffset = section.offset;
+
+    bool hasInvalidUCN = false;
+
+    while (section.offset < section.text.size()) {
+      size_t endOffset;
+      char32_t ch = peekChar(section, &endOffset);
+      if (std::isdigit(ch)) {
+        section.offset = endOffset;
+      } else if (ch == 'e' || ch == 'E' || ch == 'p' || ch == 'P') {
+        /**
+         * Note: `sign` (`+` / `-`) is optional for `pp-number`. If there
+         * isn't a sign after e/E/p/P, the second rule of the right-recursive
+         * grammar is applied.
+         */
+        section.offset = endOffset;
+        if (endOffset >= section.text.size()) break;
+        ch = peekChar(section, &endOffset);
+        if (ch == '+' || ch == '-') {
+          section.offset = endOffset;
+        }
+      } else if (ch == '.') {
+        section.offset = endOffset;
+      } else if (isMatchIdentifierNonDigitCharacter(section, &endOffset)) {
+        section.offset = endOffset;
+      } else if (ch == '\\') {
+        if (endOffset >= section.text.size()) break;
+        ch = peekCharAtOffset(section, endOffset, &endOffset);
+        if (ch == 'u' || ch == 'U') {
+          size_t ucnStart = section.offset;
+          section.offset = endOffset;
+          bool isValidUCN =
+              skipUniversalCharacterNameHexQuad(section, ch, ucnStart);
+          if (!isValidUCN) hasInvalidUCN = true;
+        }
+      } else {
+        break;
+      }
+    }
+
+    return {slice(section.text, startOffset, section.offset), hasInvalidUCN};
+  }
+
+  /**
+   * This function is very similar to the code in `getToken` that
+   * parses tokens, yet they are not exactly the same. For example, the function
+   * can optionally parse header names, while `getToken` does not support it.
+   *
+   * TODO: we may abstract the shared logics to a function/class for parsing
+   * processing token. However there is no need to be rush until more
+   * differences become clear.
+   */
+  PreprocessingToken scanPreprocessingTokenInsideDreictive(
+      ScanSection& section, bool enableParseHeaderName = false) {
+    size_t nextOffset;
+    char32_t ch = peekChar(section, &nextOffset);
+
+    // TODO implement header name parsing
+    //
+    // This is only needed when handling `#include` directives. The relevant
+    // logics will be added when support for `#include` directive is added.
+
+    if (std::isdigit(ch) ||
+        ch == '.' && section.offset < section.text.size() &&
+            std::isdigit(peekCharAtOffset(section, nextOffset, &nextOffset))) {
+      size_t startOffset = section.offset;
+      ResultOfScanPPNumberText result = scanPPNumberText(section);
+
+      if (result.hasInvalidUCN) {
+        diagnostics.report({DiagnosticLevel::Error,
+                            {0, 0},
+                            "Found invalid universal character name"});
+        return InvalidToken{std::string{result.text}};
+      } else {
+        return PPNumber{std::string{result.text}};
+      }
+    } else if (std::optional<Punctuator> punctuator = scanPunctuator(section)) {
+      return *punctuator;
+    } else if (std::isalpha(ch) || ch == '_') {
+      // TODO FIXME incorrect predicate for the do-while loop.
+      // should use isMatchIdentifierNonDigit to replace
+      // `std::isalpha(ch) || ch == '_'`. Also it is probably not correct to
+      // assign nextOffset to section.offset when entering the loop.
+      size_t startOffset = section.offset;
+
+      do {
+        section.offset = nextOffset;  // HERE, I suspect it is incorrect.
+        ch = peekChar(section, &nextOffset);
+      } while (section.offset < section.text.size() &&
+               (std::isdigit(ch) || std::isalpha(ch) || ch == '_'));
+
+      std::string_view text = slice(section.text, startOffset, section.offset);
+
+      // TODO support u, u8 and U string and character constant.
+      if (section.offset < section.text.size() && text == "L") {
+        ch = peekChar(section, &nextOffset);
+        if (ch == '"' || ch == '\'') {
+          bool isValid = skipQuotedLiteralContent(section, EncodingPrefix::L);
+          text = slice(section.text, startOffset, section.offset);
+
+          if (ch == '"') {
+            return StringLiteral{isValid, std::string{text}};
+          } else {
+            return CharacterConstant{isValid, std::string{text}};
+          }
+        } else {
+          return Identifier{std::string{text}};
+        }
+      } else {
+        auto it = std::ranges::find_if(keywordArray, [&](Keyword keyword) {
+          return keyword.text == text;
+        });
+
+        if (it != keywordArray.end()) {
+          return Keyword{it->kind, std::string{text}};
+        } else {
+          return Identifier{std::string{text}};
+        }
+      }
+    } else if (ch == '"' || ch == '\'') {
+      size_t startOffset = section.offset;
+      bool isValid = skipQuotedLiteralContent(section, EncodingPrefix::None);
+      std::string_view text = slice(section.text, startOffset, section.offset);
+
+      if (ch == '"') {
+        return StringLiteral{isValid, std::string{text}};
+      } else {
+        return CharacterConstant{isValid, std::string{text}};
+      }
+    } else {
+      size_t startOffset = section.offset;
+      getChar(section);
+      std::string_view text = slice(section.text, startOffset, section.offset);
+      return InvalidToken{std::string{text}};
+    }
   }
 
   bool isMatchNewline(const ScanSection& section, size_t* endOffset = nullptr) {
@@ -711,6 +883,7 @@ class PreprocessingLexer {
     std::string_view text;
     InvalidNumberReason invalidReason;
     std::string_view invalidSuffix;
+    bool hasInvalidUCN;  // UCN: Universal Character Name
   };
 
   /**
@@ -764,43 +937,11 @@ class PreprocessingLexer {
      * we can parse the number with pp-number's grammar first.
      */
 
-    bool hasInvalidUCN = false;
-    while (section.offset < section.text.size()) {
-      char32_t ch = peekChar(section, &endOffset);
-      if (std::isdigit(ch)) {
-        section.offset = endOffset;
-      } else if (ch == 'e' || ch == 'E' || ch == 'p' || ch == 'P') {
-        /**
-         * Note: `sign` (`+` / `-`) is optional for `pp-number`. If there
-         * isn't a sign after e/E/p/P, the second rule of the right-recursive
-         * grammar is applied.
-         */
-        section.offset = endOffset;
-        if (endOffset >= section.text.size()) break;
-        ch = peekChar(section, &endOffset);
-        if (ch == '+' || ch == '-') {
-          section.offset = endOffset;
-        }
-      } else if (ch == '.') {
-        section.offset = endOffset;
-      } else if (isMatchIdentifierNonDigitCharacter(section, &endOffset)) {
-        section.offset = endOffset;
-      } else if (ch == '\\') {
-        if (endOffset >= section.text.size()) break;
-        ch = peekCharAtOffset(section, endOffset, &endOffset);
-        if (ch == 'u' || ch == 'U') {
-          size_t ucnStart = section.offset;
-          section.offset = endOffset;
-          bool isValidUCN =
-              skipUniversalCharacterNameHexQuad(section, ch, ucnStart);
-          if (!isValidUCN) hasInvalidUCN = true;
-        }
-      } else {
-        break;
-      }
-    }
-
-    if (hasInvalidUCN) {
+    ResultOfScanPPNumberText ppResult = scanPPNumberText(section);
+    if (ppResult.hasInvalidUCN) {
+      diagnostics.report({DiagnosticLevel::Error,
+                          {0, 0},
+                          "Found invalid universal character name"});
       return {NumberKind::Invalid};
     }
 
@@ -812,7 +953,7 @@ class PreprocessingLexer {
     bool hasIntegralPart = false;
     bool hasExponentPart = false;
 
-    std::string_view sv = slice(section.text, startOffset, section.offset);
+    std::string_view sv = ppResult.text;
     NumberTextScanResult result{
         NumberKind::Int, RadixKind::Dec, sv, InvalidNumberReason::None, {}};
 
@@ -1311,17 +1452,125 @@ class PreprocessingLexer {
     return isIdentifierCharacter(peekChar(section, endOffset));
   }
 
+  bool isMatchIdentifier(ScanSection section, size_t* endOffset) {
+    size_t nextOffset;
+
+    if (!isMatchIdentifierNonDigitCharacter(section, &nextOffset)) {
+      return false;
+    }
+
+    section.offset = nextOffset;
+
+    while (section.offset < section.text.size() &&
+           isMatchIdentifierCharacter(section, &nextOffset)) {
+      section.offset = nextOffset;
+    }
+
+    if (endOffset) *endOffset = section.offset;
+
+    return true;
+  }
+
   void skipToNextLine(ScanSection& section) {
     size_t endOffset;
     while (section.offset < section.text.size() &&
            !isMatchNewline(section, &endOffset)) {
       getChar(section);
     }
-    section.offset = endOffset;
+    if (section.offset < section.text.size()) {
+      section.offset = endOffset;
+    }
     isAtLineStart = true;
   }
 
-  // TODO wip
+#define REPORT_HASH_IS_NOT_FOLLOW_BY_A_MACRO_PARAMETER \
+  diagnostics.report({DiagnosticLevel::Error,          \
+                      {0, 0},                          \
+                      "\"#\" is not followed by a macro parameter"})
+
+  bool validateHashOperator(const MacroDef& def) {
+    ScanSection section{std::string_view{def.body}, 0};
+
+    skipSpacesAndComments(section, false);
+
+    if (section.offset == section.text.size()) {
+      return true;
+    }
+
+    bool isFirstToken = true;
+    PreprocessingToken token;
+
+    while (section.offset < section.text.size()) {
+      skipSpacesAndComments(section, false);
+      token = scanPreprocessingTokenInsideDreictive(section);
+
+      Punctuator* punc = std::get_if<Punctuator>(&token);
+
+      if (!punc) {
+        isFirstToken = false;
+        continue;
+      }
+
+      if (isFirstToken && punc->kind == PunctuatorKind::HashHash) {
+        diagnostics.report(
+            {DiagnosticLevel::Error,
+             {0, 0},
+             "\"##\" cannot appear at the start of macro expansion"});
+        return false;
+      }
+
+      if (def.kind == MacroKind::FunctionLikeMacro &&
+          punc->kind == PunctuatorKind::Hash) {
+        ScanSection copy = section;
+
+        skipSpacesAndComments(copy, false);
+
+        if (section.offset == section.text.size()) {
+          REPORT_HASH_IS_NOT_FOLLOW_BY_A_MACRO_PARAMETER;
+          return false;
+        }
+
+        PreprocessingToken subsequentToken =
+            scanPreprocessingTokenInsideDreictive(section);
+
+        if (!std::holds_alternative<Identifier>(subsequentToken) &&
+            !std::holds_alternative<Keyword>(subsequentToken)) {
+          REPORT_HASH_IS_NOT_FOLLOW_BY_A_MACRO_PARAMETER;
+          return false;
+        }
+
+        const std::string& text = getTokenText(subsequentToken);
+
+        if (!std::ranges::all_of(def.parameters,
+                                 [&](const std::string& parameter) {
+                                   return parameter == text;
+                                 })) {
+          REPORT_HASH_IS_NOT_FOLLOW_BY_A_MACRO_PARAMETER;
+          return false;
+        }
+
+        section = copy;
+      }
+
+      isFirstToken = false;
+    }
+
+    std::string& text =
+        std::visit([](auto& t) -> std::string& { return t.text; }, token);
+
+    if (text == "##") {
+      diagnostics.report(
+          {DiagnosticLevel::Error,
+           {0, 0},
+           "\"##\" cannot appear at the end of macro expansion"});
+      return false;
+    }
+
+    return true;
+  }
+
+#undef REPORT_HASH_IS_NOT_FOLLOW_BY_A_MACRO_PARAMETER
+
   // TODO remember to add test where #define spans multiple lines
   void scanDirective(ScanSection& section) {
     assert(!scanStack.empty());
@@ -1347,27 +1596,35 @@ class PreprocessingLexer {
       skipSpacesAndComments(section, false);
 
       if (section.offset == section.text.size() || isMatchNewline(section)) {
-        // TODO add test for this error.
         diagnostics.report({DiagnosticLevel::Error,
                             {section.offset, section.offset},
                             "incomplete #define directive"});
-        skipToNextLine(section);
+
+        if (section.offset < section.text.size()) {
+          skipToNextLine(section);
+        }
         return;
       }
 
       size_t macroNameStart = section.offset;
-      while (section.offset < section.text.size() &&
-             !isMatchSpace(section, &endOffset)) {
-        section.offset = endOffset;
-      }
-      newDef.name = slice(section.text, macroNameStart, section.offset);
-      if (!isIdentifier(newDef.name)) {
+      if (!isMatchIdentifier(section, &endOffset)) {
         // TODO write test for this error.
         diagnostics.report({DiagnosticLevel::Error,
                             {macroNameStart, section.offset},
                             "macro name must be an identifier"});
         skipToNextLine(section);
         return;
+      }
+
+      section.offset = endOffset;
+      newDef.name = slice(section.text, macroNameStart, section.offset);
+
+      if (section.offset < section.text.size() &&
+          !isMatchNonNewlineSpace(section) && peekChar(section) != '(') {
+        diagnostics.report(
+            {DiagnosticLevel::Warning,
+             {section.offset, section.offset},
+             "ISO C99 requires whitespace after the macro name"});
       }
 
       skipSpacesAndComments(section, false);
@@ -1378,6 +1635,15 @@ class PreprocessingLexer {
 
         for (;;) {
           if (!newDef.parameters.empty()) {
+            if (section.offset == section.text.size() ||
+                isMatchNewline(section)) {
+              diagnostics.report({DiagnosticLevel::Error,
+                                  {section.offset, endOffset},
+                                  "incomplete #define directive"});
+              skipToNextLine(section);
+              return;
+            }
+
             ch = peekChar(section, &endOffset);
             if (ch == ',') {
               section.offset = endOffset;
@@ -1385,7 +1651,7 @@ class PreprocessingLexer {
               section.offset = endOffset;
               break;
             } else {
-              std::string message = "expected ',' or ')', found '";
+              std::string message = "expected ',' or ')', found \"";
               // TODO ch is a char32_t, and if the ch is a multibyte
               // character (larger than 256) the value is truncated
               // after pushed to the message string.
@@ -1393,7 +1659,7 @@ class PreprocessingLexer {
               // This involve the display encoding, which will be
               // solve later.
               message.push_back(static_cast<char>(ch));
-              message += "'";
+              message += '"';
               diagnostics.report({DiagnosticLevel::Error,
                                   {section.offset, endOffset},
                                   std::move(message)});
@@ -1406,32 +1672,41 @@ class PreprocessingLexer {
           }
 
           skipSpacesAndComments(section, false);
-          ch = peekChar(section, &endOffset);
-          if (!isIdentifierNonDigitCharacter(ch)) {
-            // not a valid ch, report an error and quit.
-            std::string message = "expected parameter name, found ";
-            message.push_back(static_cast<char>(ch));
+
+          if (section.offset == section.text.size() ||
+              isMatchNewline(section)) {
             diagnostics.report({DiagnosticLevel::Error,
                                 {section.offset, endOffset},
-                                std::move(message)});
+                                "incomplete #define directive"});
             skipToNextLine(section);
             return;
           }
 
-          size_t startOfParamterName = section.offset;
+          if (!isMatchIdentifierNonDigitCharacter(section)) {
+            diagnostics.report({DiagnosticLevel::Error,
+                                {section.offset, endOffset},
+                                "expected a parameter name"});
+            skipToNextLine(section);
+            return;
+          }
+
+          ch = peekChar(section, &endOffset);
+
+          size_t startOfParameterName = section.offset;
           while (section.offset < section.text.size() &&
                  isMatchIdentifierCharacter(section, &endOffset)) {
             section.offset = endOffset;
           }
+
           std::string parameterName = std::string{
-              slice(section.text, startOfParamterName, section.offset)};
+              slice(section.text, startOfParameterName, section.offset)};
           auto iter = std::ranges::find(newDef.parameters, parameterName);
           if (iter != newDef.parameters.end()) {
             // TODO write test for this error.
             diagnostics.report(
                 {DiagnosticLevel::Error,
-                 {startOfParamterName, section.offset},
-                 "duplicate macro paramter name '" + parameterName + "'"});
+                 {startOfParameterName, section.offset},
+                 "duplicate macro parameter name '" + parameterName + "'"});
             skipToNextLine(section);
             return;
           }
@@ -1448,19 +1723,26 @@ class PreprocessingLexer {
       size_t startOfMacroBody = section.offset;
       while (section.offset < section.text.size() &&
              !isMatchNewline(section, &endOffset)) {
-        getChar(section, &endOffset);
+        getChar(section);
       }
-      section.offset = endOffset;
+
+      if (section.offset < section.text.size()) {
+        section.offset = endOffset;
+      }
+
       newDef.body = slice(section.text, startOfMacroBody, section.offset);
 
-      macroDefDict.insert({newDef.name, newDef});
+      if (validateHashOperator(newDef)) {
+        macroDefDict.insert({newDef.name, newDef});
+      }
     } else {
       // TODO Handle other directives.
     }
   }
 
   bool canScanDirective() {
-    return std::holds_alternative<FileFrame>(scanStack.back()) && isAtLineStart;
+    return !scanStack.empty() &&
+           std::holds_alternative<FileFrame>(scanStack.back()) && isAtLineStart;
   }
 
   Token getToken() {
@@ -1471,20 +1753,17 @@ class PreprocessingLexer {
     ScanSection& section = getScanSection(scanStack.back());
 
     /**
-     * Invariant: when entering `getToken`, the `section.offset` never points to
-     * a whitespace character. the offset is advanced to the first non-space
-     * character when the lexer is created, and again after a token is parsed by
-     * the end of this function.
+     * Invariant: when entering `getToken`, the `section.offset` never points
+     * to a whitespace character. the offset is advanced to the first
+     * non-space character when the lexer is created, and again after a token
+     * is parsed by the end of this function.
      */
 
     if (canScanDirective()) {
-      size_t nextOffset;
-      char32_t ch = peekChar(section, &nextOffset);
-
-      while (canScanDirective() && ch == '#') {
-        scanDirective(section);
+      while (section.offset < section.text.size()) {
         skipSpacesAndComments(section);
-        if (section.offset == section.text.size()) break;
+        if (peekChar(section) != '#') break;
+        scanDirective(section);
       }
 
       if (section.offset == section.text.size()) {
@@ -1494,7 +1773,6 @@ class PreprocessingLexer {
     }
 
     Token token;
-
     size_t nextOffset;
     char32_t ch = peekChar(section, &nextOffset);
 
@@ -1552,7 +1830,8 @@ class PreprocessingLexer {
       token = *punctuator;
     } else if (std::isalpha(ch) || ch == '_') {
       // TODO FIXME incorrect predicate for the do-while loop.
-      // should use isMatchIdentifierNonDigit to replace std::isalpha(ch) || ch
+      // should use isMatchIdentifierNonDigit to replace std::isalpha(ch) ||
+      // ch
       // ==
       // '_'. also it is probably not correct to assign nextOffset to
       // section.offset when entering the loop.
@@ -1578,6 +1857,8 @@ class PreprocessingLexer {
           } else {
             token = CharacterConstant{isValid, std::string{text}};
           }
+        } else {
+          token = Identifier{std::string{text}};
         }
       } else {
         auto it = std::ranges::find_if(keywordArray, [&](Keyword keyword) {
