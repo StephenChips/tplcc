@@ -1417,13 +1417,6 @@ class PreprocessingLexer {
     return result;
   }
 
- public:
-  PreprocessingLexer(std::string input, CharDecodeFunc& decodeFunc,
-                     Diagnostic& diagnostics)
-      : decodeFunc(decodeFunc), diagnostics(diagnostics), isAtLineStart(true) {
-    pushFileFrame(std::move(input));
-  };
-
   bool isIdentifierNonDigitCharacter(char32_t codepoint) {
     return codepoint == '_' || codepoint >= 'A' && codepoint <= 'Z' ||
            codepoint >= 'a' && codepoint <= 'z' ||
@@ -1555,8 +1548,7 @@ class PreprocessingLexer {
       isFirstToken = false;
     }
 
-    std::string& text =
-        std::visit([](auto& t) -> std::string& { return t.text; }, token);
+    std::string& text = getTokenText(token);
 
     if (text == "##") {
       diagnostics.report(
@@ -1682,7 +1674,7 @@ class PreprocessingLexer {
             return;
           }
 
-          if (!isMatchIdentifierNonDigitCharacter(section)) {
+          if (!isMatchIdentifier(section, &endOffset)) {
             diagnostics.report({DiagnosticLevel::Error,
                                 {section.offset, endOffset},
                                 "expected a parameter name"});
@@ -1690,26 +1682,21 @@ class PreprocessingLexer {
             return;
           }
 
-          ch = peekChar(section, &endOffset);
+          std::string parameterName =
+              std::string{slice(section.text, section.offset, endOffset)};
 
-          size_t startOfParameterName = section.offset;
-          while (section.offset < section.text.size() &&
-                 isMatchIdentifierCharacter(section, &endOffset)) {
-            section.offset = endOffset;
-          }
-
-          std::string parameterName = std::string{
-              slice(section.text, startOfParameterName, section.offset)};
           auto iter = std::ranges::find(newDef.parameters, parameterName);
           if (iter != newDef.parameters.end()) {
             // TODO write test for this error.
             diagnostics.report(
                 {DiagnosticLevel::Error,
-                 {startOfParameterName, section.offset},
+                 {section.offset, endOffset},
                  "duplicate macro parameter name '" + parameterName + "'"});
             skipToNextLine(section);
             return;
           }
+
+          section.offset = endOffset;
 
           newDef.parameters.push_back(std::move(parameterName));
           skipSpacesAndComments(section, false);
@@ -1744,6 +1731,13 @@ class PreprocessingLexer {
     return !scanStack.empty() &&
            std::holds_alternative<FileFrame>(scanStack.back()) && isAtLineStart;
   }
+
+ public:
+  PreprocessingLexer(std::string input, CharDecodeFunc& decodeFunc,
+                     Diagnostic& diagnostics)
+      : decodeFunc(decodeFunc), diagnostics(diagnostics), isAtLineStart(true) {
+    pushFileFrame(std::move(input));
+  };
 
   Token getToken() {
     if (scanStack.empty()) {
