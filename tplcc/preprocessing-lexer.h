@@ -1563,6 +1563,212 @@ class PreprocessingLexer {
 
 #undef REPORT_HASH_IS_NOT_FOLLOW_BY_A_MACRO_PARAMETER
 
+  /**
+   * Because the macro body is always valid, some checks are omitted.
+   * For example, there is no need to check if a # operator is followed by a
+   * non-identifier token, or if a ## appears at either end of the macro
+   * body.
+   *
+   * The output is a utf-8 string.
+   *
+   * --
+   *
+   * TODO
+   *
+   * I used to think preserving spaces and comments would simplify source
+   * location tracking, because deleting them causes tokens to be shifted
+   * earlier and would require additional mapping to recover original positions.
+   * However, the '#' and '##' operators themselves generate new tokens and
+   * insert them into the text, which inherently shift the positions of
+   * subsequent tokens. Therefore preserving spaces and comments does not
+   * meaningfully simplify location tracking.
+   *
+   * I should figure out how to do this mapping, maybe the data structure
+   * that stores the text needs updated.
+   *
+   * TODO
+   *
+   * In the current system the macro-expanded text is UTF-8 and the source
+   * encoding is user-defined, yet both are decoded into UTF-32 codepoints
+   * during processing. It would be better to use utf-8 everywhere as the sole
+   * encoding. If the source's encoding isn't utf-8, convert it beforehead using
+   * a third-party library. There are a few benefits:
+   *
+   * 1. Avoids dual-encoding overheads - no need to write two versions of
+   *    decoding functions and carefully decide which to use where.
+   *
+   * 2. Eliminates the need for self-implemented conversion logic.
+   *
+   * 3. Allows any texts to be compared without worrying about encoding
+   *    mismatches.
+   */
+
+  class HashOperatorEvaluator {
+    PreprocessingLexer& pplex;
+    const MacroDef& def;
+    const std::vector<std::string>& arguments;
+    bool enableParseHeaderName = false;
+
+    HashOperatorEvaluator(const MacroDef& def,
+                          const std::vector<std::string>& argumement,
+                          bool enableParseHeaderName = false)
+        : def(def),
+          arguments(argumement),
+          enableParseHeaderName(enableParseHeaderName) {};
+
+    std::string getNextTokenText(ScanSection& section) {
+      PreprocessingToken token =
+          scanPreprocessingTokenInsideDreictive(section, enableParseHeaderName);
+      return getTokenText(token);
+    }
+
+    void appendCodepointTo(std::string& str, char32_t cp) {
+      if (cp <= 0x7F) {
+        str.push_back(static_cast<char8_t>(cp));
+      } else if (cp <= 0x7FF) {
+        str.push_back(static_cast<char8_t>(0xC0 | (cp >> 6)));
+        str.push_back(static_cast<char8_t>(0x80 | (cp & 0x3F)));
+      } else if (cp <= 0xFFFF) {
+        str.push_back(static_cast<char8_t>(0xE0 | (cp >> 12)));
+        str.push_back(static_cast<char8_t>(0x80 | ((cp >> 6) & 0x3F)));
+        str.push_back(static_cast<char8_t>(0x80 | (cp & 0x3F)));
+      } else if (cp <= 0x10FFFF) {
+        str.push_back(static_cast<char8_t>(0xF0 | (cp >> 18)));
+        str.push_back(static_cast<char8_t>(0x80 | ((cp >> 12) & 0x3F)));
+        str.push_back(static_cast<char8_t>(0x80 | ((cp >> 6) & 0x3F)));
+        str.push_back(static_cast<char8_t>(0x80 | (cp & 0x3F)));
+      }
+    }
+
+    std::string stringize(ScanSection& section) {
+      std::string text = getNextTokenText(section);
+
+      // The input should have been checked, so we will find the argument for
+      // sure.
+      auto it = std::ranges::find(def.parameters, text);
+      const std::string& arg = arguments[it - def.parameters.begin()];
+
+      std::string result = '"';
+      ScanSection argSection{std::string_view{arg}, 0};
+
+      while (argSection.offset < argSection.text.size()) {
+        char32_t ch = getChar(argSection);
+        if (ch == '"' || ch == '\\') {
+          result += "\\";
+          result += ch;
+        } else {
+          /**
+           * TODO After changing the internal encoding to utf8, refractor this
+           * code: first let `getChar(section)` returns a string_view, then we
+           * can write result.append(string_view);
+           */
+          appendCodepointTo(result, ch);
+        }
+      }
+
+      result += '"';
+
+      return result;
+    }
+
+    bool isValidTokenText(const std::string& text) {
+      ScanSection section{std::string_view{text}, 0};
+      PreprocessingToken token =
+          scanPreprocessingTokenInsideDreictive(section, enableParseHeaderName);
+      return !std::holds_alternative<InvalidToken>(token) &&
+             section.offset == section.text.size();
+    }
+
+   public:
+    std::string evaluate() {
+      enum class EvalState { AfterLHS, AfterDoubleHash, AfterRHS };
+
+      std::string result;
+      ScanSection section{def.body, 0};
+      EvalState state = EvalState::AfterLHS;
+      std::string concatenatedText;
+
+      skipSpacesAndComments(section, false);
+
+      while (section.offset < section.text.size()) {
+        std::string previousText;
+        std::string text = getNextTokenText(section);
+        EvalState nextState;
+
+        switch (state) {
+          case EvalState::AfterLHS:
+            if (text == "##") {
+              nextState = EvalState::AfterDoubleHash;
+              concatenatedText = previousText;
+              break;
+            }
+
+            if (text == "#") {
+              skipSpacesAndComments(section, false);
+              text += stringize(section);
+            }
+
+            result += text;
+            break;
+          case EvalState::AfterDoubleHash:
+            if (text == "##") {
+              break;
+            }
+
+            if (text == "#") {
+              skipSpacesAndComments(section, false);
+              text += stringize(section);
+            }
+
+            // adding a stringized token to a concatenated text will
+            // definitely produces a invalid token.
+            concatenatedText += text;
+            if (isValidTokenText(concatenatedText)) {
+              nextState = EvalState::AfterRHS;
+            } else {
+              concatenatedText.clear();
+              nextState = EvalState::AfterLHS;
+            }
+          case EvalState::AfterRHS:
+            if (text == "##") {
+              nextState = EvalState::AfterDoubleHash;
+              concatenatedText += previousText;
+              break;
+            }
+
+            // `concatenatedText` is checked for its validity everytime a new
+            // text is joint, so there isn't need for recheck here.
+            result += concatenatedText;
+            nextState = EvalState::AfterLHS;
+
+            if (text == "#") {
+              skipSpacesAndComments(section, false);
+              text += stringize(section);
+            }
+
+            result += text;
+            break;
+        }
+
+        previousText = std::move(text);
+
+        size_t spaceStart = section.offset;
+        skipSpacesAndComments(section, false);
+
+        if (state != EvalState::AfterDoubleHash &&
+            nextState != EvalState::AfterDoubleHash &&
+            spaceStart < section.offset &&
+            section.offset < section.text.size()) {
+          result += ' ';
+        }
+
+        state = nextState;
+      }
+
+      return result;
+    }
+  };
+
   // TODO remember to add test where #define spans multiple lines
   void scanDirective(ScanSection& section) {
     assert(!scanStack.empty());
@@ -1747,10 +1953,10 @@ class PreprocessingLexer {
     ScanSection& section = getScanSection(scanStack.back());
 
     /**
-     * Invariant: when entering `getToken`, the `section.offset` never points
-     * to a whitespace character. the offset is advanced to the first
-     * non-space character when the lexer is created, and again after a token
-     * is parsed by the end of this function.
+     * Invariant: when entering `getToken`, the `section.offset` never
+     * points to a whitespace character. the offset is advanced to the
+     * first non-space character when the lexer is created, and again
+     * after a token is parsed by the end of this function.
      */
 
     if (canScanDirective()) {
@@ -1824,8 +2030,8 @@ class PreprocessingLexer {
       token = *punctuator;
     } else if (std::isalpha(ch) || ch == '_') {
       // TODO FIXME incorrect predicate for the do-while loop.
-      // should use isMatchIdentifierNonDigit to replace std::isalpha(ch) ||
-      // ch
+      // should use isMatchIdentifierNonDigit to replace
+      // std::isalpha(ch) || ch
       // ==
       // '_'. also it is probably not correct to assign nextOffset to
       // section.offset when entering the loop.
