@@ -9,14 +9,20 @@
 - [x] Sketch the process of parsing #define directives and macro expansions (first attempt) and arrange tasks accordingly.
     - [x] Sketch the proecess of parsing `#define` directive
     - [x] Sketch the process of macro expansion
-- [ ] Parse `#define` directive
+- [x] Parse `#define` directive
     - [x] Add the flag `isAtLineStart` and write code that maintain its status.
     - [x] Parse the `#define` directive to create a new macro.
     - [x] Checks `#` and `##` operators' validity
-- [ ] Macro expansion
-    - [ ] Evaluate `#` and `##` operators, forming a new `std::string_view` for scanning.
-- [ ] Handle pushing and pop frames
+- [x] Handle pushing and pop frames
     - [x] After scanned a token we should pop the frame out of the scan stack if the frame has been fully scanned.
+- [ ] Macro expansion
+    - [ ] Add class `HashOperatorEvaluator`, which evaluates `#` and `##` operators of a macro.
+    - [ ] Cancel the template `CharDecodeFunc`, move all implmentations to `preprocessing-lexer.cpp`, and let the class accept a UTF-8 std::string as input. 
+    - [ ] Test the HashOperatorEvaluator and fix all bugs
+- [ ] Add implementation of expanding object-like macros, and tests
+- [ ] Add implementation of expanding function-like macros, and tests
+- [ ] Add more tests for expanding macros, e.g., cases that includes two kinds of macros.
+
 
 ## parse `#define` directive 
 
@@ -75,19 +81,3 @@ first pass:
     We evaluate all `#` and `##` operators, resulting a **temporary `std::string_view`** that will be scanned at the second pass.
 second pass:
     Recursively, we scan through the temporary `std::string_view` and produce tokens and expand nested macro inside it.
-
-**2026/5/11**
-
-Discovered that GCC/Clang reports an error when `#` isn't followed by a macro parameter, and `##` synthesizes an invalid preprocessing even if the macro is not used.
-
-This means I should do an additional check while scanning the text. We could tokenize the macro body but I think that makes the code more complicated. If we tokenize the text, it wouldn't be solely for this check; otherwise it is not worth the hassle. Once we have a list of (or a stream of) tokens, we should store it and later directly use it to output tokens, skipping the process of scanning the text. However this also means `getToken` needs to handle two kinds of input: a list of (or a stream of) tokens and a `std::string_view`. Maybe such an approach is more efficient, but it is harder to implement. 
-
-[TASK] [TODO] *Currently we can match `#` and `#` while scanning, and check if it is followed by a parameter name (optionally separated by non newline spaces).*
-
-How? By the function `validateMacroOperators`:
-
-This function will tokenize the text, and check if the `#` and `##` is valid. The pseudocode is:
-
-```
-while 
-```
