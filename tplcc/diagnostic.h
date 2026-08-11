@@ -8,9 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "code-buffer.h"
-#include "scanner.h"
-
 struct ErrorLocation {
   size_t startOffset;
   size_t endOffset;
