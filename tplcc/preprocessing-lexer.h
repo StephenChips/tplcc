@@ -134,6 +134,18 @@
   X(LBrace, "<%")                        \
   X(RBrace, "%>")
 
+// 主模板：检测类型 T 是否是 Variant 的子类型
+template <typename T, typename Variant>
+struct IsAlternativeT : std::false_type {};
+
+// 特化：如果 T 是 Variant 的某个子类型
+template <typename T, typename... Types>
+struct IsAlternativeT<T, std::variant<Types...>>
+    : std::disjunction<std::is_same<T, Types>...> {};
+
+template <typename T, typename Variant>
+concept IsAlternativeOf = IsAlternativeT<T, Variant>::value;
+
 enum class MacroKind { ObjectLikeMacro, FunctionLikeMacro };
 
 struct MacroDef {
@@ -151,6 +163,7 @@ struct ScanSection {
 struct FileFrame {
   std::string buffer;
   ScanSection section;
+  bool isAtLineStart;
 };
 
 struct MacroFrame {
@@ -290,8 +303,6 @@ class PreprocessingLexer {
 
   std::map<std::string, MacroDef> macroDefDict;
 
-  bool isAtLineStart;
-
   ScanSection& getScanSection(ScanStackFrame& frame);
 
   bool popFrame();
@@ -354,7 +365,14 @@ class PreprocessingLexer {
   void skipBackslashNewlinesAtOffset(const ScanSection& section,
                                      size_t& offset);
 
-  void skipSpacesAndComments(ScanSection& section, bool multiline = true);
+  void skipDirectiveSpacesAndComments(ScanSection& section);
+
+  template <IsAlternativeOf<ScanStackFrame> T>
+  void skipSpacesAndComments(T& section);
+
+  void skipSpacesAndComments(ScanStackFrame& frame) {
+    std::visit([this](auto& frame) { skipSpacesAndComments(frame); }, frame);
+  }
 
   bool isMatchIdentifierNonDigitCharacter(const ScanSection& section,
                                           size_t* endOffset = nullptr);
@@ -450,7 +468,7 @@ class PreprocessingLexer {
 
  public:
   PreprocessingLexer(std::string input, Diagnostic& diagnostics)
-      : diagnostics(diagnostics), isAtLineStart(true) {
+      : diagnostics(diagnostics) {
     pushFileFrame(std::move(input));
   };
 
@@ -460,4 +478,42 @@ class PreprocessingLexer {
 
   bool isEof();
 };
+
+template <IsAlternativeOf<ScanStackFrame> T>
+void PreprocessingLexer::skipSpacesAndComments(T& frame) {
+  ScanSection& section = frame.section;
+
+  size_t endOffset;
+  while (section.offset < section.text.size()) {
+    if (isMatchNewline(section, &endOffset)) {
+      section.offset = endOffset;
+      if constexpr (std::is_same_v<T, FileFrame>) {
+        frame.isAtLineStart = true;
+      }
+    } else if (isMatchNonNewlineSpace(section, &endOffset)) {
+      section.offset = endOffset;
+    } else if (isMatchString(section, "//", &endOffset)) {
+      section.offset = endOffset;
+      skipToNextLine(section);
+    } else if (isMatchString(section, "/*", &endOffset)) {
+      size_t startOfComment = section.offset;
+      size_t afterCommentStart = endOffset;
+
+      section.offset = endOffset;
+
+      while (section.offset < section.text.size() &&
+             !isMatchString(section, "*/", &endOffset)) {
+        getChar(section);
+      }
+      section.offset = endOffset;
+      if (section.offset >= section.text.size()) {
+        diagnostics.report({DiagnosticLevel::Error,
+                            {startOfComment, afterCommentStart},
+                            "Miss end of multiline comment"});
+      }
+    } else {
+      break;
+    }
+  }
+}
 #endif  // !TPLCC_PP_H

@@ -96,8 +96,8 @@ bool PreprocessingLexer::popFrame() {
   scanStack.pop_back();
 
   while (!scanStack.empty()) {
+    skipSpacesAndComments(scanStack.back());
     ScanSection& section = getScanSection(scanStack.back());
-    skipSpacesAndComments(section);
     if (section.offset < section.text.size()) break;
     scanStack.pop_back();
   }
@@ -112,10 +112,9 @@ bool PreprocessingLexer::pushFileFrame(std::string text) {
   frame.buffer = std::move(text);
   frame.section.offset = 0;
   frame.section.text = frame.buffer;
+  frame.isAtLineStart = true;
 
-  isAtLineStart = true;
-
-  skipSpacesAndComments(frame.section);
+  skipSpacesAndComments(frame);
   if (frame.section.offset == frame.section.text.size()) {
     scanStack.pop_back();
     return false;
@@ -388,15 +387,23 @@ void PreprocessingLexer::skipBackslashNewlinesAtOffset(
   }
 }
 
-void PreprocessingLexer::skipSpacesAndComments(ScanSection& section,
-                                               bool multiline) {
+void PreprocessingLexer::skipDirectiveSpacesAndComments(ScanSection& section) {
   size_t endOffset;
   while (section.offset < section.text.size()) {
     if (isMatchNewline(section, &endOffset)) {
-      if (!multiline) break;
       section.offset = endOffset;
-      isAtLineStart = true;
+      break;
     } else if (isMatchNonNewlineSpace(section, &endOffset)) {
+      /**
+       * C99 spec (section 6.10) states that the only whtiespace characters that
+       * shall appears between two preprocessing token within a directive are
+       * space ' '  and horizontal tab '\t', yet neither GCC nor Clang issues an
+       * fatal error. Only when `--pedantic` flags is provided does GCC issue a
+       * warning (but not Clang).
+       *
+       * I think it is perfectly fine to permit form feed '\f' and vertical
+       * '\v' to appear within a directive in this implementation.
+       */
       section.offset = endOffset;
     } else if (isMatchString(section, "//", &endOffset)) {
       section.offset = endOffset;
@@ -1220,7 +1227,6 @@ void PreprocessingLexer::skipToNextLine(ScanSection& section) {
   if (section.offset < section.text.size()) {
     section.offset = endOffset;
   }
-  isAtLineStart = true;
 }
 
 #define REPORT_HASH_IS_NOT_FOLLOW_BY_A_MACRO_PARAMETER \
@@ -1231,7 +1237,7 @@ void PreprocessingLexer::skipToNextLine(ScanSection& section) {
 bool PreprocessingLexer::validateHashOperator(const MacroDef& def) {
   ScanSection section{std::string_view{def.body}, 0};
 
-  skipSpacesAndComments(section, false);
+  skipDirectiveSpacesAndComments(section);
 
   if (section.offset == section.text.size()) {
     return true;
@@ -1241,7 +1247,7 @@ bool PreprocessingLexer::validateHashOperator(const MacroDef& def) {
   PreprocessingToken token;
 
   while (section.offset < section.text.size()) {
-    skipSpacesAndComments(section, false);
+    skipDirectiveSpacesAndComments(section);
     token = scanPreprocessingTokenInsideDreictive(section);
 
     Punctuator* punc = std::get_if<Punctuator>(&token);
@@ -1263,7 +1269,7 @@ bool PreprocessingLexer::validateHashOperator(const MacroDef& def) {
         punc->kind == PunctuatorKind::Hash) {
       ScanSection copy = section;
 
-      skipSpacesAndComments(copy, false);
+      skipDirectiveSpacesAndComments(copy);
 
       if (section.offset == section.text.size()) {
         REPORT_HASH_IS_NOT_FOLLOW_BY_A_MACRO_PARAMETER;
@@ -1365,7 +1371,7 @@ std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
   EvalState state = EvalState::AfterLHS;
   std::string concatenatedText;
 
-  pplex.skipSpacesAndComments(section, false);
+  pplex.skipDirectiveSpacesAndComments(section);
 
   while (section.offset < section.text.size()) {
     std::string previousText;
@@ -1381,7 +1387,7 @@ std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
         }
 
         if (text == "#") {
-          pplex.skipSpacesAndComments(section, false);
+          pplex.skipDirectiveSpacesAndComments(section);
           text += stringize(section);
         }
 
@@ -1393,7 +1399,7 @@ std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
         }
 
         if (text == "#") {
-          pplex.skipSpacesAndComments(section, false);
+          pplex.skipDirectiveSpacesAndComments(section);
           text += stringize(section);
         }
 
@@ -1419,7 +1425,7 @@ std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
         nextState = EvalState::AfterLHS;
 
         if (text == "#") {
-          pplex.skipSpacesAndComments(section, false);
+          pplex.skipDirectiveSpacesAndComments(section);
           text += stringize(section);
         }
 
@@ -1430,7 +1436,7 @@ std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
     previousText = std::move(text);
 
     size_t spaceStart = section.offset;
-    pplex.skipSpacesAndComments(section, false);
+    pplex.skipDirectiveSpacesAndComments(section);
 
     if (state != EvalState::AfterDoubleHash &&
         nextState != EvalState::AfterDoubleHash &&
@@ -1453,7 +1459,7 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
   char32_t ch = getChar(section);
   assert(ch == '#');
 
-  skipSpacesAndComments(section, false);
+  skipDirectiveSpacesAndComments(section);
 
   size_t endOffset = section.offset;
   size_t directiveNameStart = section.offset;
@@ -1465,7 +1471,7 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
       slice(section.text, directiveNameStart, section.offset);
 
   if (directiveName == "define") {
-    skipSpacesAndComments(section, false);
+    skipDirectiveSpacesAndComments(section);
 
     if (section.offset == section.text.size() || isMatchNewline(section)) {
       diagnostics.report({DiagnosticLevel::Error,
@@ -1498,7 +1504,7 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
                           "ISO C99 requires whitespace after the macro name"});
     }
 
-    skipSpacesAndComments(section, false);
+    skipDirectiveSpacesAndComments(section);
 
     if (section.offset < section.text.size() &&
         peekChar(section, &endOffset) == '(') {
@@ -1542,7 +1548,7 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
           break;
         }
 
-        skipSpacesAndComments(section, false);
+        skipDirectiveSpacesAndComments(section);
 
         if (section.offset == section.text.size() || isMatchNewline(section)) {
           diagnostics.report({DiagnosticLevel::Error,
@@ -1577,13 +1583,13 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
         section.offset = endOffset;
 
         newDef.parameters.push_back(std::move(parameterName));
-        skipSpacesAndComments(section, false);
+        skipDirectiveSpacesAndComments(section);
       }
 
       newDef.kind = MacroKind::FunctionLikeMacro;
     }
 
-    skipSpacesAndComments(section, false);
+    skipDirectiveSpacesAndComments(section);
 
     size_t startOfMacroBody = section.offset;
     while (section.offset < section.text.size() &&
@@ -1606,8 +1612,9 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
 }
 
 bool PreprocessingLexer::canScanDirective() {
-  return !scanStack.empty() &&
-         std::holds_alternative<FileFrame>(scanStack.back()) && isAtLineStart;
+  if (scanStack.empty()) return false;
+  auto fileFrame = std::get_if<FileFrame>(&scanStack.back());
+  return fileFrame && fileFrame->isAtLineStart;
 }
 
 // PUBLIC FUNCTIONS
@@ -1617,27 +1624,30 @@ Token PreprocessingLexer::getToken() {
     return EofToken{};
   }
 
-  ScanSection& section = getScanSection(scanStack.back());
-
   /**
-   * Invariant: when entering `getToken`, the `section.offset` never
-   * points to a whitespace character. the offset is advanced to the
-   * first non-space character when the lexer is created, and again
-   * after a token is parsed by the end of this function.
+   * Invariant: when entering `getToken`, the `section.offset` points to neither
+   * a whitespace character nor a comment. the offset is advanced to the first
+   * non-space character when the lexer is created, and after a token is scanned
+   * the lexer will skip the spaces and comments after the token until it reach
+   * the start of the next token.
    */
 
   if (canScanDirective()) {
-    while (section.offset < section.text.size()) {
-      skipSpacesAndComments(section);
-      if (peekChar(section) != '#') break;
-      scanDirective(section);
+    FileFrame& frame = std::get<FileFrame>(scanStack.back());
+
+    while (frame.section.offset < frame.section.text.size() &&
+           peekChar(frame.section) == '#') {
+      scanDirective(frame.section);
+      skipSpacesAndComments(frame);
     }
 
-    if (section.offset == section.text.size()) {
+    if (frame.section.offset == frame.section.text.size()) {
       popFrame();
       return getToken();
     }
   }
+
+  ScanSection& section = getScanSection(scanStack.back());
 
   Token token;
   size_t nextOffset;
@@ -1753,8 +1763,11 @@ Token PreprocessingLexer::getToken() {
     token = InvalidToken{std::string{text}};
   }
 
-  isAtLineStart = false;
-  skipSpacesAndComments(section);
+  if (auto fileFrame = std::get_if<FileFrame>(&scanStack.back())) {
+    fileFrame->isAtLineStart = false;
+  }
+
+  skipSpacesAndComments(scanStack.back());
 
   if (section.offset == section.text.size()) {
     popFrame();
