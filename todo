@@ -16,8 +16,9 @@
 - [x] Handle pushing and pop frames
     - [x] After scanned a token we should pop the frame out of the scan stack if the frame has been fully scanned.
 - [ ] Macro expansion
-    - [ ] Add class `HashOperatorEvaluator`, which evaluates `#` and `##` operators of a macro.
-    - [ ] Cancel the template `CharDecodeFunc`, move all implmentations to `preprocessing-lexer.cpp`, and let the class accept a UTF-8 std::string as input. 
+    - [x] Add class `HashOperatorEvaluator`, which evaluates `#` and `##` operators of a macro.
+    - [x] Remove the template `CharDecodeFunc`, move all implmentations to `preprocessing-lexer.cpp`, making `PreprocessingLexer` accept only UTF-8 `std::string` input.
+    - [ ] Move `PreprocessingLexer::isAtLineStart` to the `FileFrame` struct, where it belongs.
     - [ ] Test the HashOperatorEvaluator and fix all bugs
 - [ ] Add implementation of expanding object-like macros, and tests
 - [ ] Add implementation of expanding function-like macros, and tests

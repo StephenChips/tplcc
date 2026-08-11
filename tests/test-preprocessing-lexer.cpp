@@ -8,7 +8,6 @@
 #include <numeric>
 #include <string_view>
 
-#include "tplcc/encoding.h"
 #include "tplcc/preprocessing-lexer.h"
 
 /**
@@ -44,7 +43,7 @@ std::ostream& operator<<(std::ostream& os, KeywordKind kind) {
 
 class TestPreprocessingLexer : public ::testing::Test {
  protected:
-  std::unique_ptr<PreprocessingLexer<decltype(decodeUTF8)>> pplex;
+  std::unique_ptr<PreprocessingLexer> pplex;
   std::unique_ptr<DiagnosticStub> diag;
 
   std::vector<Token> scanInput(const std::string& inputStr) {
@@ -54,8 +53,7 @@ class TestPreprocessingLexer : public ::testing::Test {
 
   void setUpPreprocessor(std::string inputStr) {
     diag = std::make_unique<DiagnosticStub>();
-    pplex = std::make_unique<PreprocessingLexer<decltype(decodeUTF8)>>(
-        inputStr, decodeUTF8, *diag);
+    pplex = std::make_unique<PreprocessingLexer>(inputStr, *diag);
   }
 
  private:

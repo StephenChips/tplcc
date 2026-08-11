@@ -10,6 +10,7 @@ endif()
 
 
 add_executable(tests-main
+  "../tplcc/preprocessing-lexer.cpp"
 	"test-preprocessing-lexer.cpp")
 
 target_include_directories(tests-main PUBLIC "..")
