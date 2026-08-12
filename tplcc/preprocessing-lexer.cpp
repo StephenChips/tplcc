@@ -1123,29 +1123,6 @@ std::optional<char32_t> PreprocessingLexer::parseUniversalCharacterNameHexQuad(
   return result;
 }
 
-bool PreprocessingLexer::isIdentifierNonDigitCharacter(char32_t codepoint) {
-  return codepoint == '_' || codepoint >= 'A' && codepoint <= 'Z' ||
-         codepoint >= 'a' && codepoint <= 'z' ||
-         isValidUniversalCharacterNameCodepoint(codepoint);
-}
-
-bool PreprocessingLexer::isIdentifierCharacter(char32_t ch) {
-  return std::isdigit(ch) || isIdentifierNonDigitCharacter(ch);
-}
-
-bool PreprocessingLexer::isIdentifier(std::string_view sv) {
-  if (sv.size() == 0) return false;
-  if (!isIdentifierNonDigitCharacter(sv[0])) return false;
-
-  for (size_t i = 1; i < sv.size(); i++) {
-    if (!isIdentifierCharacter(sv[i])) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
                                                     bool includesDigit,
                                                     size_t* endOffset) {

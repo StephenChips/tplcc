@@ -382,12 +382,6 @@ class PreprocessingLexer {
       const ScanSection& section, char32_t ch, size_t ucnStart,
       size_t* endOffset);
 
-  bool isIdentifierNonDigitCharacter(char32_t codepoint);
-
-  bool isIdentifierCharacter(char32_t ch);
-
-  bool isIdentifier(std::string_view sv);
-
   bool isMatchIdentifierCharacter(const ScanSection& section,
                                   size_t* endOffset);
 
