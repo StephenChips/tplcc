@@ -4,6 +4,20 @@
 #include <limits>
 #include <string>
 
+// The MSVC's std::isspace will throw a runtime error when we pass a
+// codepoint that is larger than 255. We have to write our own version of
+// isspace here to avoid this error.
+static bool isSpace(char32_t ch) {
+  return ch == ' ' || ch == '\f' || ch == '\n' || ch == '\r' || ch == '\t' ||
+         ch == '\v';
+}
+static bool isNonNewlineSpace(char32_t ch) {
+  return ch == ' ' || ch == '\f' || ch == '\t' || ch == '\v';
+}
+static bool isNewlineCharacter(char32_t ch) { return ch == '\r' || ch == '\n'; }
+
+static bool isOctDigit(char32_t ch) { return ch >= '0' && ch <= '7'; }
+
 std::string& getTokenText(PreprocessingToken& token) {
   return std::visit([](auto& t) -> std::string& { return t.text; }, token);
 }
@@ -67,7 +81,7 @@ DecodeUTF8Result decodeUTF8(const char* buffer) {
   return {ch, len};
 }
 
-void appendCodepointTo(std::string& str, char32_t cp) {
+void encodeUTF8(std::string& str, char32_t cp) {
   if (cp <= 0x7F) {
     str.push_back(static_cast<char8_t>(cp));
   } else if (cp <= 0x7FF) {
@@ -428,22 +442,6 @@ void PreprocessingLexer::skipDirectiveSpacesAndComments(ScanSection& section) {
       break;
     }
   }
-
-  // TODO try replacing isMatchXXX functions with consumeIf, consumeUntil
-  // functions, which needs some advance template skills.
-  //
-  // for example: the code can be refractored to:
-  //
-  // while (offset < text.size()) {
-  //   if (consumeIf<isSpace>(sv, offset)) {
-  //   } else if (consumeIf<"/*">(sv, offset, "//")) {
-  //     consumeUntil<isNewline>(sv, offset, true);
-  //   } else if (consumeIf<"/*">(sv, offset)) {
-  //     consumeUntil<"*/">(sv, offset, true);
-  //   } else {
-  //     break;
-  //   }
-  // }
 }
 
 bool PreprocessingLexer::isMatchIdentifierNonDigitCharacter(
@@ -1340,12 +1338,7 @@ std::string PreprocessingLexer::HashOperatorEvaluator::stringize(
       result += "\\";
       result += ch;
     } else {
-      /**
-       * TODO After changing the internal encoding to utf8, refractor this
-       * code: first let `getChar(section)` returns a string_view, then we
-       * can write result.append(string_view);
-       */
-      appendCodepointTo(result, ch);
+      encodeUTF8(result, ch);
     }
   }
 

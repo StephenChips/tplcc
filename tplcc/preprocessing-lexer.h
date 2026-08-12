@@ -181,7 +181,7 @@ struct DecodeUTF8Result {
 };
 
 DecodeUTF8Result decodeUTF8(const char* buffer);
-void appendCodepointTo(std::string& str, char32_t cp);
+void encodeUTF8(std::string& str, char32_t cp);
 
 inline std::string_view slice(std::string_view& sv, size_t start, size_t end) {
   return sv.substr(start, end - start);
@@ -310,23 +310,6 @@ class PreprocessingLexer {
   bool pushFileFrame(std::string text);
 
   std::optional<Punctuator> scanPunctuator(ScanSection& section);
-
-  // The MSVC's std::isspace will throw a runtime error when we pass a
-  // codepoint that is larger than 255. We have to write our own version of
-  // isspace here to avoid this error.
-  static bool isSpace(char32_t ch) {
-    return ch == ' ' || ch == '\f' || ch == '\n' || ch == '\r' || ch == '\t' ||
-           ch == '\v';
-  }
-  static bool isNonNewlineSpace(char32_t ch) {
-    return ch == ' ' || ch == '\f' || ch == '\t' || ch == '\v';
-  }
-  static bool isDirectiveSpace(char32_t ch) { return ch == ' ' || ch == '\t'; }
-  static bool isNewlineCharacter(char32_t ch) {
-    return ch == '\r' || ch == '\n';
-  }
-
-  static bool isOctDigit(char32_t ch) { return ch >= '0' && ch <= '7'; }
 
   char32_t getChar(ScanSection& section, bool willSkipBackslashNewlines = true);
 
