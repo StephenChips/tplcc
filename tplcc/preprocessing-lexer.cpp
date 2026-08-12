@@ -276,18 +276,13 @@ PreprocessingToken PreprocessingLexer::scanPreprocessingTokenInsideDreictive(
     }
   } else if (std::optional<Punctuator> punctuator = scanPunctuator(section)) {
     return *punctuator;
-  } else if (std::isalpha(ch) || ch == '_') {
-    // TODO FIXME incorrect predicate for the do-while loop.
-    // should use isMatchIdentifierNonDigit to replace
-    // `std::isalpha(ch) || ch == '_'`. Also it is probably not correct to
-    // assign nextOffset to section.offset when entering the loop.
+  } else if (isMatchIdentifierNonDigitCharacter(section, &nextOffset)) {
     size_t startOffset = section.offset;
 
     do {
-      section.offset = nextOffset;  // HERE, I suspect it is incorrect.
-      ch = peekChar(section, &nextOffset);
+      section.offset = nextOffset;
     } while (section.offset < section.text.size() &&
-             (std::isdigit(ch) || std::isalpha(ch) || ch == '_'));
+             isMatchIdentifierCharacter(section, &nextOffset));
 
     std::string_view text = slice(section.text, startOffset, section.offset);
 
@@ -442,48 +437,6 @@ void PreprocessingLexer::skipDirectiveSpacesAndComments(ScanSection& section) {
       break;
     }
   }
-}
-
-bool PreprocessingLexer::isMatchIdentifierNonDigitCharacter(
-    const ScanSection& section, size_t* endOffset) {
-  size_t pos = section.offset;
-  char32_t ch = getCharAtOffset(section, pos);
-  char32_t codepoint;
-
-  if (ch == '\\') {
-    ch = getCharAtOffset(section, pos);
-    if (ch != 'u' && ch != 'U') {
-      // TODO refine crude impl
-      return false;
-    }
-
-    std::optional<char32_t> res =
-        parseUniversalCharacterNameHexQuad(section, ch, section.offset, &pos);
-    if (res == std::nullopt) {
-      // TODO refine crude impl
-      return false;
-    }
-
-    // TODO we should test if the value of the hex quad is a valid unicode
-    // codepoint.
-    //
-    // For example \U33333333 exceeded unicode's range (max 0x10FFF) so it is
-    // not a valid codepoint, and both gcc and clang don't support \U0010FFFD
-    // as an valid identifier character. Probably because it is in the Plane
-    // 16 (Supplementary Private Use Area-B)
-  } else {
-    codepoint = ch;
-  }
-
-  if (endOffset) *endOffset = pos;
-
-  /**
-   * TODO Maybe I should add library icu4c to check if the codepoint has
-   * property xid_start.
-   *
-   * [https://github.com/unicode-org/icu/tree/main/icu4c](icu4c)
-   */
-  return isIdentifierNonDigitCharacter(ch);
 }
 
 bool PreprocessingLexer::skipQuotedLiteralContent(
@@ -1192,8 +1145,39 @@ bool PreprocessingLexer::isIdentifier(std::string_view sv) {
 }
 
 bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
+                                                    bool includesDigit,
                                                     size_t* endOffset) {
-  return isIdentifierCharacter(peekChar(section, endOffset));
+  size_t pos = section.offset;
+  char32_t ch = getCharAtOffset(section, pos);
+  char32_t codepoint;
+
+  if (ch == '\\') {
+    ch = getCharAtOffset(section, pos);
+    if (ch != 'u' && ch != 'U') {
+      return false;
+    }
+    std::optional<char32_t> res =
+        parseUniversalCharacterNameHexQuad(section, ch, section.offset, &pos);
+    if (!res) return false;
+    codepoint = *res;
+  } else {
+    codepoint = ch;
+  }
+
+  if (endOffset) *endOffset = pos;
+
+  return isIdentifierNonDigitCharacter(ch) ||
+         (includesDigit && std::isdigit(codepoint));
+}
+
+bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
+                                                    size_t* endOffset) {
+  return isMatchIdentifierCharacter(section, true, endOffset);
+}
+
+bool PreprocessingLexer::isMatchIdentifierNonDigitCharacter(
+    const ScanSection& section, size_t* endOffset) {
+  return isMatchIdentifierCharacter(section, false, endOffset);
 }
 
 bool PreprocessingLexer::isMatchIdentifier(ScanSection section,
@@ -1697,20 +1681,13 @@ Token PreprocessingLexer::getToken() {
     }
   } else if (std::optional<Punctuator> punctuator = scanPunctuator(section)) {
     token = *punctuator;
-  } else if (std::isalpha(ch) || ch == '_') {
-    // TODO FIXME incorrect predicate for the do-while loop.
-    // should use isMatchIdentifierNonDigit to replace
-    // std::isalpha(ch) || ch
-    // ==
-    // '_'. also it is probably not correct to assign nextOffset to
-    // section.offset when entering the loop.
+  } else if (isMatchIdentifierNonDigitCharacter(section, &nextOffset)) {
     size_t startOffset = section.offset;
 
     do {
-      section.offset = nextOffset;  // HERE, I suspect it is incorrect.
-      ch = peekChar(section, &nextOffset);
+      section.offset = nextOffset;
     } while (section.offset < section.text.size() &&
-             (std::isdigit(ch) || std::isalpha(ch) || ch == '_'));
+             isMatchIdentifierCharacter(section, &nextOffset));
 
     std::string_view text = slice(section.text, startOffset, section.offset);
 

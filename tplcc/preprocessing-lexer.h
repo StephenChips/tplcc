@@ -391,6 +391,9 @@ class PreprocessingLexer {
   bool isMatchIdentifierCharacter(const ScanSection& section,
                                   size_t* endOffset);
 
+  bool isMatchIdentifierCharacter(const ScanSection& section,
+                                  bool includesDigit, size_t* endOffset);
+
   bool isMatchIdentifier(ScanSection section, size_t* endOffset);
 
   void skipToNextLine(ScanSection& section);

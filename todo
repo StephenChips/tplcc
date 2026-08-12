@@ -15,6 +15,8 @@
     - [x] Checks `#` and `##` operators' validity
 - [x] Handle pushing and pop frames
     - [x] After scanned a token we should pop the frame out of the scan stack if the frame has been fully scanned.
+- [ ] Add tests and fix bugs about scanning non-ascii identifiers
+- [ ] Fix bug: let the lexer to be able to output utf-8 in a error message correctly.
 - [ ] Macro expansion
     - [x] Add class `HashOperatorEvaluator`, which evaluates `#` and `##` operators of a macro.
     - [x] Remove the template `CharDecodeFunc`, move all implmentations to `preprocessing-lexer.cpp`, making `PreprocessingLexer` accept only UTF-8 `std::string` input.

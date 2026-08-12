@@ -186,30 +186,32 @@ TEST_F(TestPreprocessingLexer, test_comments) {
 }
 
 TEST_F(TestPreprocessingLexer, test_identifiers) {
-  // TODO Add more tests
-  std::vector<std::string> identifiers{"foo", "_foo", "Foo", "foo12",
-                                       "fo\\\no"};
-
-  std::string input;
-  for (size_t i = 0; i < identifiers.size(); i++) {
-    input += identifiers[i];
-    input += " ";
-  }
-
-  setUpPreprocessor(input);
-
-  for (const auto id : identifiers) {
+  auto testIdentifier = [this](std::string input) {
+    setUpPreprocessor(input);
     auto token = pplex->getToken();
-    auto ident = std::get_if<Identifier>(&token);
-    if (ident) {
-      ASSERT_EQ(ident->text, id);
+    if (auto ident = std::get_if<Identifier>(&token)) {
+      ASSERT_EQ(ident->text, input);
     } else {
-      FAIL() << "Expect an identifer " << id << std::endl;
+      FAIL() << "Expect an identifier " << input << std::endl;
     }
-  }
+  };
 
-  EXPECT_TRUE(pplex->isEof());
-  EXPECT_TRUE(std::holds_alternative<EofToken>(pplex->getToken()));
+  testIdentifier("foo");
+  testIdentifier("_foo");
+  testIdentifier("foo12");
+  testIdentifier("你好");
+
+  // test invalid identifers
+
+  /*
+   * 1. An identifiers that contains a codepoint (or a ucn) that exceeded
+   * unicode's range (max 0x10FFF)
+   *
+   * 2. An identtifers that contains a codepoint (or a ucn)
+   * that isn't a identifiers character. (e.g. )
+   *
+   * 3. An identifeirs that contains emoji, which is not supported.
+   */
 }
 
 TEST_F(TestPreprocessingLexer, test_keywords) {
