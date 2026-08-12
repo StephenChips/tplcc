@@ -183,7 +183,7 @@ struct DecodeUTF8Result {
 DecodeUTF8Result decodeUTF8(const char* buffer);
 void encodeUTF8(std::string& str, char32_t cp);
 
-inline std::string_view slice(std::string_view& sv, size_t start, size_t end) {
+inline std::string_view slice(std::string_view sv, size_t start, size_t end) {
   return sv.substr(start, end - start);
 }
 

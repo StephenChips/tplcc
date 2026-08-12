@@ -4,6 +4,8 @@
 #include <limits>
 #include <string>
 
+static constexpr char32_t MAX_UNICODE_CODEPOINT = 0x10FFF;
+
 // The MSVC's std::isspace will throw a runtime error when we pass a
 // codepoint that is larger than 255. We have to write our own version of
 // isspace here to avoid this error.
@@ -1111,7 +1113,7 @@ std::optional<char32_t> PreprocessingLexer::parseUniversalCharacterNameHexQuad(
   }
 
   if (i < hexCount) {
-    diagnostics.report({DiagnosticLevel::Error,
+    diagnostics.report({DiagnosticLevel::Warning,
                         {ucnStart, cursor},
                         "incomplete universal character name"});
     return std::nullopt;
@@ -1147,27 +1149,56 @@ bool PreprocessingLexer::isIdentifier(std::string_view sv) {
 bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
                                                     bool includesDigit,
                                                     size_t* endOffset) {
-  size_t pos = section.offset;
-  char32_t ch = getCharAtOffset(section, pos);
+  size_t startOffset = section.offset;
+  ScanSection copy = section;
+  char32_t ch = getChar(copy);
   char32_t codepoint;
+  bool isUCN = false;
 
   if (ch == '\\') {
-    ch = getCharAtOffset(section, pos);
+    ch = getChar(copy);
     if (ch != 'u' && ch != 'U') {
       return false;
     }
     std::optional<char32_t> res =
-        parseUniversalCharacterNameHexQuad(section, ch, section.offset, &pos);
+        parseUniversalCharacterNameHexQuad(copy, ch, startOffset, &copy.offset);
     if (!res) return false;
     codepoint = *res;
+    isUCN = true;
   } else {
     codepoint = ch;
   }
 
-  if (endOffset) *endOffset = pos;
+  if (endOffset) *endOffset = copy.offset;
 
-  return isIdentifierNonDigitCharacter(ch) ||
-         (includesDigit && std::isdigit(codepoint));
+  if (codepoint == '_' || std::isalpha(codepoint)) {
+    return true;
+  }
+
+  if (includesDigit && std::isdigit(codepoint)) {
+    return true;
+  }
+
+  if (isValidUniversalCharacterNameCodepoint(codepoint)) {
+    return true;
+  }
+
+  if (isUCN) {
+    if (codepoint > MAX_UNICODE_CODEPOINT) {
+      std::string msg{slice(section.text, startOffset, copy.offset)};
+      msg += " is not a valid universal character name";
+      diagnostics.report(
+          {DiagnosticLevel::Error, {startOffset, copy.offset}, msg});
+    } else {
+      std::string msg = "universal character name ";
+      msg += slice(section.text, startOffset, copy.offset);
+      msg += " is not valid in an identifier";
+      diagnostics.report(
+          {DiagnosticLevel::Error, {startOffset, copy.offset}, msg});
+    }
+  }
+
+  return false;
 }
 
 bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
@@ -1731,6 +1762,13 @@ Token PreprocessingLexer::getToken() {
     getChar(section);
     std::string_view text = slice(section.text, startOffset, section.offset);
     token = InvalidToken{std::string{text}};
+
+    std::string msg{"stray character '"};
+    msg += text;
+    msg += "' in the program";
+
+    diagnostics.report(
+        {DiagnosticLevel::Error, {startOffset, section.offset}, msg});
   }
 
   if (auto fileFrame = std::get_if<FileFrame>(&scanStack.back())) {

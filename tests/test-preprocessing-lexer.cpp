@@ -200,17 +200,62 @@ TEST_F(TestPreprocessingLexer, test_identifiers) {
   testIdentifier("_foo");
   testIdentifier("foo12");
   testIdentifier("你好");
+  testIdentifier("\\u4f60\\U0000597D");
 
   // test invalid identifers
 
-  /*
-   * 1. An identifiers that contains a codepoint (or a ucn) that exceeded
-   * unicode's range (max 0x10FFF)
-   *
-   * 2. An identtifers that contains a codepoint (or a ucn)
-   * that isn't a identifiers character. (e.g. )
-   *
-   * 3. An identifeirs that contains emoji, which is not supported.
+  struct ExpectedDiagnostic {
+    DiagnosticLevel level;
+    std::string message;
+  };
+
+  auto testInvalidIdentifier =
+      [this](std::string input, Token expectedToken,
+             std::vector<ExpectedDiagnostic> expectedDiagnostics) {
+        setUpPreprocessor(input);
+
+        Token token = pplex->getToken();
+        ASSERT_EQ(token, expectedToken);
+
+        ASSERT_EQ(diag->collectedInfos.size(), expectedDiagnostics.size());
+
+        for (int i = 0; i < diag->collectedInfos.size(); i++) {
+          ASSERT_EQ(diag->collectedInfos[i].level,
+                    expectedDiagnostics[i].level);
+          ASSERT_EQ(diag->collectedInfos[i].message,
+                    expectedDiagnostics[i].message);
+        }
+      };
+
+  testInvalidIdentifier(
+      "\\u333z", InvalidToken{std::string{"\\"}},
+      {{DiagnosticLevel::Warning, "incomplete universal character name"},
+       {DiagnosticLevel::Error, "stray character '\\' in the program"}});
+
+  // A universal character name whose codepoint is bigger than Unicode's maximum
+  // codepoint.
+  testInvalidIdentifier(
+      "\\UffffFFFF", InvalidToken{std::string{"\\"}},
+      {{DiagnosticLevel::Error,
+        "\\UffffFFFF is not a valid universal character name"},
+       {DiagnosticLevel::Error, "stray character '\\' in the program"}});
+
+  // Not all unicode can be used within an identifier.
+  testInvalidIdentifier(
+      "\\u00b0", InvalidToken{std::string{"\\"}},
+      {{DiagnosticLevel::Error,
+        "universal character name \\u00b0 is not valid in an identifier"},
+       {DiagnosticLevel::Error, "stray character '\\' in the program"}});
+
+  // Emojis as identifier are not supported, even though GCC and Clang do.
+  testInvalidIdentifier(
+      "😀", InvalidToken{std::string{"😀"}},
+      {{DiagnosticLevel::Error, "stray character '😀' in the program"}});
+
+  /**
+   * Worth to noting that UCNs in string literals and character constants are
+   * subject to less constraints. For example, even its codepoint excceeded
+   * the maximum Unicode codepoint, no diagnostic is reported.
    */
 }
 
