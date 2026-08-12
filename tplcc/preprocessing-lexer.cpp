@@ -1514,13 +1514,7 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
             break;
           } else {
             std::string message = "expected ',' or ')', found \"";
-            // TODO ch is a char32_t, and if the ch is a multibyte
-            // character (larger than 256) the value is truncated
-            // after pushed to the message string.
-            //
-            // This involve the display encoding, which will be
-            // solve later.
-            message.push_back(static_cast<char>(ch));
+            encodeUTF8(message, ch);
             message += '"';
             diagnostics.report({DiagnosticLevel::Error,
                                 {section.offset, endOffset},
