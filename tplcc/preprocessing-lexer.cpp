@@ -299,12 +299,15 @@ PreprocessingToken PreprocessingLexer::scanPreprocessingTokenInsideDreictive(
   } else if (std::optional<Punctuator> punctuator = scanPunctuator(section)) {
     return *punctuator;
   } else if (isMatchIdentifierNonDigitCharacter(section, &nextOffset)) {
+    std::string name;
     size_t startOffset = section.offset;
 
-    do {
+    while (section.offset < section.text.size()) {
+      auto codepoint = isMatchIdentifierCharacter(section, &nextOffset);
+      if (codepoint == std::nullopt) break;
+      encodeUTF8(name, *codepoint);
       section.offset = nextOffset;
-    } while (section.offset < section.text.size() &&
-             isMatchIdentifierCharacter(section, &nextOffset));
+    }
 
     std::string_view text = slice(section.text, startOffset, section.offset);
 
@@ -321,7 +324,7 @@ PreprocessingToken PreprocessingLexer::scanPreprocessingTokenInsideDreictive(
           return CharacterConstant{isValid, std::string{text}};
         }
       } else {
-        return Identifier{std::string{text}};
+        return Identifier{std::string{text}, name};
       }
     } else {
       auto it = std::ranges::find_if(
@@ -330,7 +333,7 @@ PreprocessingToken PreprocessingLexer::scanPreprocessingTokenInsideDreictive(
       if (it != keywordArray.end()) {
         return Keyword{it->kind, std::string{text}};
       } else {
-        return Identifier{std::string{text}};
+        return Identifier{std::string{text}, name};
       }
     }
   } else if (ch == '"' || ch == '\'') {
@@ -1143,9 +1146,8 @@ std::optional<char32_t> PreprocessingLexer::parseUniversalCharacterNameHexQuad(
   return result;
 }
 
-bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
-                                                    bool includesDigit,
-                                                    size_t* endOffset) {
+std::optional<char32_t> PreprocessingLexer::isMatchIdentifierCharacter(
+    const ScanSection& section, bool includesDigit, size_t* endOffset) {
   size_t startOffset = section.offset;
   ScanSection copy = section;
   char32_t ch = getChar(copy);
@@ -1155,11 +1157,11 @@ bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
   if (ch == '\\') {
     ch = getChar(copy);
     if (ch != 'u' && ch != 'U') {
-      return false;
+      return std::nullopt;
     }
     std::optional<char32_t> res =
         parseUniversalCharacterNameHexQuad(copy, ch, startOffset, &copy.offset);
-    if (!res) return false;
+    if (!res) return std::nullopt;
     codepoint = *res;
     isUCN = true;
   } else {
@@ -1169,15 +1171,15 @@ bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
   if (endOffset) *endOffset = copy.offset;
 
   if (codepoint == '_' || std::isalpha(codepoint)) {
-    return true;
+    return codepoint;
   }
 
   if (includesDigit && std::isdigit(codepoint)) {
-    return true;
+    return codepoint;
   }
 
   if (isValidUniversalCharacterNameCodepoint(codepoint)) {
-    return true;
+    return codepoint;
   }
 
   if (isUCN) {
@@ -1195,37 +1197,44 @@ bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
     }
   }
 
-  return false;
+  return std::nullopt;
 }
 
-bool PreprocessingLexer::isMatchIdentifierCharacter(const ScanSection& section,
-                                                    size_t* endOffset) {
+std::optional<char32_t> PreprocessingLexer::isMatchIdentifierCharacter(
+    const ScanSection& section, size_t* endOffset) {
   return isMatchIdentifierCharacter(section, true, endOffset);
 }
 
-bool PreprocessingLexer::isMatchIdentifierNonDigitCharacter(
+std::optional<char32_t> PreprocessingLexer::isMatchIdentifierNonDigitCharacter(
     const ScanSection& section, size_t* endOffset) {
   return isMatchIdentifierCharacter(section, false, endOffset);
 }
 
-bool PreprocessingLexer::isMatchIdentifier(ScanSection section,
-                                           size_t* endOffset) {
+std::optional<Identifier> PreprocessingLexer::isMatchIdentifier(
+    ScanSection section, size_t* endOffset) {
+  size_t startOffset = section.offset;
   size_t nextOffset;
 
-  if (!isMatchIdentifierNonDigitCharacter(section, &nextOffset)) {
-    return false;
+  auto codepoint = isMatchIdentifierNonDigitCharacter(section, &nextOffset);
+  if (codepoint == std::nullopt) {
+    return std::nullopt;
   }
 
   section.offset = nextOffset;
+  std::string name;
+  encodeUTF8(name, *codepoint);
 
-  while (section.offset < section.text.size() &&
-         isMatchIdentifierCharacter(section, &nextOffset)) {
+  while (section.offset < section.text.size()) {
+    codepoint = isMatchIdentifierCharacter(section, &nextOffset);
+    if (codepoint == std::nullopt) break;
+    encodeUTF8(name, *codepoint);
     section.offset = nextOffset;
   }
 
   if (endOffset) *endOffset = section.offset;
 
-  return true;
+  std::string text{slice(section.text, startOffset, section.offset)};
+  return Identifier{text, name};
 }
 
 void PreprocessingLexer::skipToNextLine(ScanSection& section) {
@@ -1490,7 +1499,8 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
     }
 
     size_t macroNameStart = section.offset;
-    if (!isMatchIdentifier(section, &endOffset)) {
+    auto identifier = isMatchIdentifier(section, &endOffset);
+    if (identifier == std::nullopt) {
       // TODO write test for this error.
       diagnostics.report({DiagnosticLevel::Error,
                           {macroNameStart, section.offset},
@@ -1500,7 +1510,7 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
     }
 
     section.offset = endOffset;
-    newDef.name = slice(section.text, macroNameStart, section.offset);
+    newDef.name = identifier->name;
 
     if (section.offset < section.text.size() &&
         !isMatchNonNewlineSpace(section) && peekChar(section) != '(') {
@@ -1624,11 +1634,11 @@ Token PreprocessingLexer::getToken() {
   }
 
   /**
-   * Invariant: when entering `getToken`, the `section.offset` points to neither
-   * a whitespace character nor a comment. the offset is advanced to the first
-   * non-space character when the lexer is created, and after a token is scanned
-   * the lexer will skip the spaces and comments after the token until it reach
-   * the start of the next token.
+   * Invariant: when entering `getToken`, the `section.offset` points to
+   * neither a whitespace character nor a comment. the offset is advanced to
+   * the first non-space character when the lexer is created, and after a
+   * token is scanned the lexer will skip the spaces and comments after the
+   * token until it reach the start of the next token.
    */
 
   if (canScanDirective()) {
@@ -1705,11 +1715,14 @@ Token PreprocessingLexer::getToken() {
     token = *punctuator;
   } else if (isMatchIdentifierNonDigitCharacter(section, &nextOffset)) {
     size_t startOffset = section.offset;
+    std::string name;
 
-    do {
+    while (section.offset < section.text.size()) {
+      auto codepoint = isMatchIdentifierCharacter(section, &nextOffset);
+      if (codepoint == std::nullopt) break;
+      encodeUTF8(name, *codepoint);
       section.offset = nextOffset;
-    } while (section.offset < section.text.size() &&
-             isMatchIdentifierCharacter(section, &nextOffset));
+    }
 
     std::string_view text = slice(section.text, startOffset, section.offset);
 
@@ -1726,7 +1739,7 @@ Token PreprocessingLexer::getToken() {
           token = CharacterConstant{isValid, std::string{text}};
         }
       } else {
-        token = Identifier{std::string{text}};
+        token = Identifier{std::string{text}, name};
       }
     } else {
       auto it = std::ranges::find_if(
@@ -1735,7 +1748,7 @@ Token PreprocessingLexer::getToken() {
       if (it != keywordArray.end()) {
         token = Keyword{it->kind, std::string{text}};
       } else {
-        token = Identifier{std::string{text}};
+        token = Identifier{std::string{text}, name};
       }
     }
 
@@ -1743,7 +1756,7 @@ Token PreprocessingLexer::getToken() {
       /**
        * TODO I should remove universal character names in a identifiers
        */
-      if (auto macroDefIter = macroDefDict.find(identifier->text);
+      if (auto macroDefIter = macroDefDict.find(identifier->name);
           macroDefIter != macroDefDict.end()) {
         if (auto frameIter = std::find_if(
                 scanStack.begin(), scanStack.end(),

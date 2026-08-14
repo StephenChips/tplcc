@@ -218,6 +218,7 @@ struct Keyword {
 
 struct Identifier {
   std::string text;
+  std::string name;
   bool operator==(const Identifier&) const = default;
 };
 
@@ -360,9 +361,6 @@ class PreprocessingLexer {
     std::visit([this](auto& frame) { skipSpacesAndComments(frame); }, frame);
   }
 
-  bool isMatchIdentifierNonDigitCharacter(const ScanSection& section,
-                                          size_t* endOffset = nullptr);
-
   bool skipQuotedLiteralContent(ScanSection& section,
                                 EncodingPrefix encodingPrefix);
   struct NumberTextScanResult {
@@ -385,13 +383,18 @@ class PreprocessingLexer {
       const ScanSection& section, char32_t ch, size_t ucnStart,
       size_t* endOffset);
 
-  bool isMatchIdentifierCharacter(const ScanSection& section,
-                                  size_t* endOffset);
+  std::optional<char32_t> isMatchIdentifierNonDigitCharacter(
+      const ScanSection& section, size_t* endOffset = nullptr);
 
-  bool isMatchIdentifierCharacter(const ScanSection& section,
-                                  bool includesDigit, size_t* endOffset);
+  std::optional<char32_t> isMatchIdentifierCharacter(const ScanSection& section,
+                                                     size_t* endOffset);
 
-  bool isMatchIdentifier(ScanSection section, size_t* endOffset);
+  std::optional<char32_t> isMatchIdentifierCharacter(const ScanSection& section,
+                                                     bool includesDigit,
+                                                     size_t* endOffset);
+
+  std::optional<Identifier> isMatchIdentifier(ScanSection section,
+                                              size_t* endOffset);
 
   void skipToNextLine(ScanSection& section);
 

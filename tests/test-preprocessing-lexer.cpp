@@ -41,6 +41,11 @@ std::ostream& operator<<(std::ostream& os, KeywordKind kind) {
 #undef X
 }
 
+std::ostream& operator<<(std::ostream& os, Identifier identifier) {
+  return os << "Identifier { text = " << identifier.text
+            << "; name = " << identifier.name << "; };" << std::endl;
+}
+
 class TestPreprocessingLexer : public ::testing::Test {
  protected:
   std::unique_ptr<PreprocessingLexer> pplex;
@@ -186,21 +191,22 @@ TEST_F(TestPreprocessingLexer, test_comments) {
 }
 
 TEST_F(TestPreprocessingLexer, test_identifiers) {
-  auto testIdentifier = [this](std::string input) {
-    setUpPreprocessor(input);
+  auto testIdentifier = [this](Identifier input) {
+    setUpPreprocessor(input.text);
     auto token = pplex->getToken();
     if (auto ident = std::get_if<Identifier>(&token)) {
-      ASSERT_EQ(ident->text, input);
+      ASSERT_EQ(ident->text, input.text);
+      ASSERT_EQ(ident->name, input.name);
     } else {
       FAIL() << "Expect an identifier " << input << std::endl;
     }
   };
 
-  testIdentifier("foo");
-  testIdentifier("_foo");
-  testIdentifier("foo12");
-  testIdentifier("你好");
-  testIdentifier("\\u4f60\\U0000597D");
+  testIdentifier({"foo", "foo"});
+  testIdentifier({"_foo", "_foo"});
+  testIdentifier({"foo12", "foo12"});
+  testIdentifier({"你好", "你好"});
+  testIdentifier({"\\u4f60\\U0000597D", "你好"});
 
   // test invalid identifers
 
@@ -531,6 +537,9 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
     while (!pplex->isEof()) {
       auto token = pplex->getToken();
       str += getTokenText(token);
+      if (!pplex->isEof()) {
+        str += " ";
+      }
     }
 
     EXPECT_EQ(str, expandedText);
@@ -545,13 +554,19 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
       "#define FOO {BAR}\r\n"
       "#define BAR FOO\r\n"
       "FOO",
-      "{FOO}");
+      "{ FOO }");
 
   testMacro(
       "#define FOO BAR\r\n"
       "#define BAR FOO\r\n"
       "FOO",
       "FOO");
+
+  testMacro(
+      "#define 你好 nihao\r\n"
+      "#define hello 你好 \\u4f60\\U0000597D\r\n"
+      "hello",
+      "nihao nihao");
 }
 
 #undef NOT_FOLLOW_BY_MACRO_PARAMETER
