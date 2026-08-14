@@ -522,4 +522,36 @@ TEST_F(TestPreprocessingLexer, test_invalid_define_directive) {
               {DiagnosticLevel::Error, "duplicate macro parameter name 'a'"});
 }
 
+TEST_F(TestPreprocessingLexer, test_macro_expansion) {
+  auto testMacro = [this](std::string input, std::string expandedText) {
+    setUpPreprocessor(input);
+
+    std::string str;
+
+    while (!pplex->isEof()) {
+      auto token = pplex->getToken();
+      str += getTokenText(token);
+    }
+
+    EXPECT_EQ(str, expandedText);
+  };
+
+  testMacro(
+      "#define FOO FOO\r\n"
+      "FOO",
+      "FOO");
+
+  testMacro(
+      "#define FOO {BAR}\r\n"
+      "#define BAR FOO\r\n"
+      "FOO",
+      "{FOO}");
+
+  testMacro(
+      "#define FOO BAR\r\n"
+      "#define BAR FOO\r\n"
+      "FOO",
+      "FOO");
+}
+
 #undef NOT_FOLLOW_BY_MACRO_PARAMETER

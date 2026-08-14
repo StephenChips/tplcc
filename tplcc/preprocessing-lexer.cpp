@@ -139,6 +139,26 @@ bool PreprocessingLexer::pushFileFrame(std::string text) {
   return true;
 }
 
+bool PreprocessingLexer::pushMacroFrame(const MacroDef& def,
+                                        std::vector<std::string> arguments) {
+  scanStack.emplace_back(MacroFrame{});
+  auto& frame = std::get<MacroFrame>(scanStack.back());
+
+  frame.def = &def;
+  frame.arguments = std::move(arguments);
+  frame.buffer =
+      HashOperatorEvaluator(*this, *frame.def, frame.arguments).evaluate();
+  frame.section = ScanSection{frame.buffer, 0};
+
+  skipSpacesAndComments(frame);
+  if (frame.section.offset == frame.section.text.size()) {
+    scanStack.pop_back();
+    return false;
+  }
+
+  return true;
+}
+
 std::optional<Punctuator> PreprocessingLexer::scanPunctuator(
     ScanSection& section) {
   if (section.offset == section.text.size()) return std::nullopt;
@@ -1361,7 +1381,7 @@ std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
   while (section.offset < section.text.size()) {
     std::string previousText;
     std::string text = getNextTokenText(section);
-    EvalState nextState;
+    EvalState nextState = state;
 
     switch (state) {
       case EvalState::AfterLHS:
@@ -1716,6 +1736,26 @@ Token PreprocessingLexer::getToken() {
         token = Keyword{it->kind, std::string{text}};
       } else {
         token = Identifier{std::string{text}};
+      }
+    }
+
+    if (auto identifier = std::get_if<Identifier>(&token)) {
+      /**
+       * TODO I should remove universal character names in a identifiers
+       */
+      if (auto macroDefIter = macroDefDict.find(identifier->text);
+          macroDefIter != macroDefDict.end()) {
+        if (auto frameIter = std::find_if(
+                scanStack.begin(), scanStack.end(),
+                [&](const ScanStackFrame& frame) {
+                  auto macroFrame = std::get_if<MacroFrame>(&frame);
+                  return macroFrame &&
+                         macroFrame->def->name == macroDefIter->second.name;
+                });
+            frameIter == scanStack.end()) {
+          pushMacroFrame(macroDefIter->second);
+          return getToken();
+        }
       }
     }
   } else if (ch == '"' || ch == '\'') {

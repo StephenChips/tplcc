@@ -21,11 +21,10 @@
     - [x] Add class `HashOperatorEvaluator`, which evaluates `#` and `##` operators of a macro.
     - [x] Remove the template `CharDecodeFunc`, move all implmentations to `preprocessing-lexer.cpp`, making `PreprocessingLexer` accept only UTF-8 `std::string` input.
     - [x] Move `PreprocessingLexer::isAtLineStart` to the `FileFrame` struct, where it belongs.
-    - [ ] Test the HashOperatorEvaluator and fix all bugs
-    - [ ] Add implementation of expanding object-like macros, and tests
-    - [ ] Add implementation of expanding function-like macros, and tests
-    - [ ] Add more tests for expanding macros, e.g., cases that includes two kinds of macros.
-
+    - [x] Add implementation of expanding object-like macros, and some basic tests
+    - [ ] Add more tests covering object-like macro expansion, including macro body with hash operators (for testing HashOperatorEvaluator)
+    - [ ] Add implementation of expanding function-like macros, and some basic tests
+    - [ ] Add more tests covering function-like macro expansion, including macro body with hash operators (for testing HashOperatorEvaluator)
 
 ## parse `#define` directive 
 

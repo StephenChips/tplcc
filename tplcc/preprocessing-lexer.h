@@ -167,7 +167,7 @@ struct FileFrame {
 };
 
 struct MacroFrame {
-  MacroDef* def;  // a pointer to the definition of the macro
+  const MacroDef* def;  // a pointer to the definition of the macro
   std::vector<std::string> arguments;
   // text after `#` and `##` evaluation.
   // Maybe it should be a vector of tokens?
@@ -309,6 +309,9 @@ class PreprocessingLexer {
 
   bool pushFileFrame(std::string text);
 
+  bool pushMacroFrame(const MacroDef& def,
+                      std::vector<std::string> arguments = {});
+
   std::optional<Punctuator> scanPunctuator(ScanSection& section);
 
   char32_t getChar(ScanSection& section, bool willSkipBackslashNewlines = true);
@@ -424,6 +427,13 @@ class PreprocessingLexer {
     const std::vector<std::string>& arguments;
     bool enableParseHeaderName = false;
 
+    std::string getNextTokenText(ScanSection& section);
+
+    std::string stringize(ScanSection& section);
+
+    bool isValidTokenText(const std::string& text);
+
+   public:
     HashOperatorEvaluator(PreprocessingLexer& pplex, const MacroDef& def,
                           const std::vector<std::string>& argumement,
                           bool enableParseHeaderName = false)
@@ -432,13 +442,6 @@ class PreprocessingLexer {
           arguments(argumement),
           enableParseHeaderName(enableParseHeaderName) {};
 
-    std::string getNextTokenText(ScanSection& section);
-
-    std::string stringize(ScanSection& section);
-
-    bool isValidTokenText(const std::string& text);
-
-   public:
     std::string evaluate();
   };
 
