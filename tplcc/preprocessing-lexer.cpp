@@ -1170,14 +1170,20 @@ std::optional<char32_t> PreprocessingLexer::isMatchIdentifierCharacter(
 
   if (endOffset) *endOffset = copy.offset;
 
-  if (codepoint == '_' || std::isalpha(codepoint)) {
-    return codepoint;
+  if (!isUCN) {
+    if (codepoint == '_' || std::isalpha(codepoint)) {
+      return codepoint;
+    }
+
+    if (includesDigit && std::isdigit(codepoint)) {
+      return codepoint;
+    }
   }
 
-  if (includesDigit && std::isdigit(codepoint)) {
-    return codepoint;
-  }
-
+  /**
+   * We use this table to determine if a codepoint is valid, whether or not it
+   * is decoded from a universal character name.
+   */
   if (isValidUniversalCharacterNameCodepoint(codepoint)) {
     return codepoint;
   }
@@ -1753,9 +1759,6 @@ Token PreprocessingLexer::getToken() {
     }
 
     if (auto identifier = std::get_if<Identifier>(&token)) {
-      /**
-       * TODO I should remove universal character names in a identifiers
-       */
       if (auto macroDefIter = macroDefDict.find(identifier->name);
           macroDefIter != macroDefDict.end()) {
         if (auto frameIter = std::find_if(

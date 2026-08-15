@@ -46,6 +46,15 @@ std::ostream& operator<<(std::ostream& os, Identifier identifier) {
             << "; name = " << identifier.name << "; };" << std::endl;
 }
 
+std::ostream& operator<<(std::ostream& os, Punctuator punct) {
+  return os << "Punctuator { kind = " << punct.kind << "; text = \""
+            << punct.text << "\"; };" << std::endl;
+}
+
+std::ostream& operator<<(std::ostream& os, InvalidToken token) {
+  return os << "InvalidToken { text = \"" << token.text << "\"; }" << std::endl;
+}
+
 class TestPreprocessingLexer : public ::testing::Test {
  protected:
   std::unique_ptr<PreprocessingLexer> pplex;
@@ -215,7 +224,7 @@ TEST_F(TestPreprocessingLexer, test_identifiers) {
     std::string message;
   };
 
-  auto testInvalidIdentifier =
+  auto testInvalidIdentifierWithUCN =
       [this](std::string input, Token expectedToken,
              std::vector<ExpectedDiagnostic> expectedDiagnostics) {
         setUpPreprocessor(input);
@@ -233,28 +242,78 @@ TEST_F(TestPreprocessingLexer, test_identifiers) {
         }
       };
 
-  testInvalidIdentifier(
+  /**
+   * TODO Fix invalid UCN error recovery in the lexer
+   *
+   * When an invalid universal character name (UCN) is encountered during
+   * scanning, the lexer currently gives up immediately and returns the first
+   * character of the UCN as an `InvalidToken` where the text is a backslash.
+   * It also emits an error message "stray character '\\' in the program".
+   *
+   * More importantly, because the lexer does not consume the rest of the
+   * invalid UCN, the remaining chracter are scanned into several tokens.
+   * These tokens shouldn't even be produced, and they can cause the parser
+   * to make incorrect parsing decisions and produce more confusing error
+   * messages.
+   *
+   * The lexer should be refractored to recover from invalid UCNs as a unit.
+   * Ideally, an invalid token should contain a entire UCN, so does the
+   * error message. Depending on the surrounding context, it may be preferable
+   * to consume a larger unit, such as the entire identifier that contains the
+   * invalid UCN, to provide better error recovery and diagnostics.
+   *
+   * The same issue also applies to keyword scanning. For example, after
+   * scanning "\\u0063onst", an InvalidToken containing "\\u0063" should be
+   * returned, or even the entire keyword "\\u0063onst" (codepoint U+0063 is
+   * 'c').
+   */
+
+  testInvalidIdentifierWithUCN(
       "\\u333z", InvalidToken{std::string{"\\"}},
       {{DiagnosticLevel::Warning, "incomplete universal character name"},
        {DiagnosticLevel::Error, "stray character '\\' in the program"}});
 
   // A universal character name whose codepoint is bigger than Unicode's maximum
   // codepoint.
-  testInvalidIdentifier(
+  testInvalidIdentifierWithUCN(
       "\\UffffFFFF", InvalidToken{std::string{"\\"}},
       {{DiagnosticLevel::Error,
         "\\UffffFFFF is not a valid universal character name"},
        {DiagnosticLevel::Error, "stray character '\\' in the program"}});
 
   // Not all unicode can be used within an identifier.
-  testInvalidIdentifier(
+  testInvalidIdentifierWithUCN(
       "\\u00b0", InvalidToken{std::string{"\\"}},
       {{DiagnosticLevel::Error,
         "universal character name \\u00b0 is not valid in an identifier"},
        {DiagnosticLevel::Error, "stray character '\\' in the program"}});
 
+  /**
+   * TODO Fix invalid UCN error recovery in the lexer
+   *
+   * After refactoring these three tests should be merged into one, with the
+   * input "\\u005f\\u0063\\u0030".
+   */
+  testInvalidIdentifierWithUCN(
+      "\\u005f" /*  _ */, InvalidToken{std::string{"\\"}},
+      {{DiagnosticLevel::Error,
+        "universal character name \\u005f is not valid in an identifier"},
+       {DiagnosticLevel::Error, "stray character '\\' in the program"}});
+
+  testInvalidIdentifierWithUCN(
+      "\\u0063" /* c */, InvalidToken{std::string{"\\"}},
+      {{DiagnosticLevel::Error,
+        "universal character name \\u0063 is not valid in an identifier"},
+       {DiagnosticLevel::Error, "stray character '\\' in the program"}});
+
+  testInvalidIdentifierWithUCN(
+      "\\u0030" /* 0 */, InvalidToken{std::string{"\\"}},
+      {{DiagnosticLevel::Error,
+        "universal character name \\u0030 is not valid in an identifier"},
+       {DiagnosticLevel::Error, "stray character '\\' in the program"}});
+
   // Emojis as identifier are not supported, even though GCC and Clang do.
-  testInvalidIdentifier(
+  testInvalidIdentifierWithUCN(
       "😀", InvalidToken{std::string{"😀"}},
       {{DiagnosticLevel::Error, "stray character '😀' in the program"}});
 
@@ -295,6 +354,23 @@ TEST_F(TestPreprocessingLexer, test_keywords) {
       FAIL() << "Expect a keyword " << id.kind << std::endl;
     }
   }
+}
+
+TEST_F(TestPreprocessingLexer, test_invalid_keyword) {
+  setUpPreprocessor("\\u0063onst");
+
+  Token token = pplex->getToken();
+  ASSERT_EQ(token, Token{InvalidToken{"\\"}});
+
+  ASSERT_EQ(diag->collectedInfos.size(), 2);
+
+  ASSERT_EQ(diag->collectedInfos[0].level, DiagnosticLevel::Error);
+  ASSERT_EQ(diag->collectedInfos[0].message,
+            "universal character name \\u0063 is not valid in an identifier");
+
+  ASSERT_EQ(diag->collectedInfos[1].level, DiagnosticLevel::Error);
+  ASSERT_EQ(diag->collectedInfos[1].message,
+            "stray character '\\' in the program");
 }
 
 TEST_F(TestPreprocessingLexer, test_floating_point_constants) {
@@ -567,6 +643,11 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
       "#define hello 你好 \\u4f60\\U0000597D\r\n"
       "hello",
       "nihao nihao");
+
+  testMacro(
+      "#define \\u4f60\\U0000597D nihao\r\n"
+      "你好\r\n",
+      "nihao");
 }
 
 #undef NOT_FOLLOW_BY_MACRO_PARAMETER

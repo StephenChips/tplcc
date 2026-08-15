@@ -26,6 +26,7 @@
     - [ ] Add more tests covering object-like macro expansion, including macro body with hash operators (for testing HashOperatorEvaluator)
     - [ ] Add implementation of expanding function-like macros, and some basic tests
     - [ ] Add more tests covering function-like macro expansion, including macro body with hash operators (for testing HashOperatorEvaluator)
+-  [ ] Fix invalid UCN error recovery in the lexer
 
 ## parse `#define` directive 
 
