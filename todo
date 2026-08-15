@@ -17,6 +17,7 @@
     - [x] After scanned a token we should pop the frame out of the scan stack if the frame has been fully scanned.
 - [x] Add tests and fix bugs about scanning non-ascii identifiers
 - [x] Fix direct insertion of codepoint into error message in the lexer; use `decodeUTF8`
+- [x] Store UCN-decoded identifer names
 - [ ] Macro expansion
     - [x] Add class `HashOperatorEvaluator`, which evaluates `#` and `##` operators of a macro.
     - [x] Remove the template `CharDecodeFunc`, move all implmentations to `preprocessing-lexer.cpp`, making `PreprocessingLexer` accept only UTF-8 `std::string` input.
