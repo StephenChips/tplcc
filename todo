@@ -23,9 +23,9 @@
     - [x] Remove the template `CharDecodeFunc`, move all implmentations to `preprocessing-lexer.cpp`, making `PreprocessingLexer` accept only UTF-8 `std::string` input.
     - [x] Move `PreprocessingLexer::isAtLineStart` to the `FileFrame` struct, where it belongs.
     - [x] Add implementation of expanding object-like macros, and some basic tests
-    - [ ] Add more tests covering object-like macro expansion, including macro body with hash operators (for testing HashOperatorEvaluator)
+    - [x] Reimplement `HashOperatorEvaluator` and add tests
     - [ ] Add implementation of expanding function-like macros, and some basic tests
-    - [ ] Add more tests covering function-like macro expansion, including macro body with hash operators (for testing HashOperatorEvaluator)
+    - [ ] Add more tests covering function-like macro expansion, including macro body with hash operators and macro parameters
 - [ ] Fix invalid UCN error recovery in the lexer
 - [x] Fix macro not expanding when to name is a keyword
     - Note: A few lines of code is added to `getToken()`. There is another function that is very similiar with `getToken()`: `scanPreprocessingTokenInsideDirectives()`, but it doesn't need to be changed. This is because it is used to validate macro bodies inside a `#define` directives, where macro names are returns like other identifiers and not expanded.

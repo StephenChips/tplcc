@@ -607,26 +607,42 @@ TEST_F(TestPreprocessingLexer, test_invalid_define_directive) {
 }
 
 TEST_F(TestPreprocessingLexer, test_macro_expansion) {
-  auto testMacro = [this](std::string input, std::string expandedText) {
-    setUpPreprocessor(input);
-
-    std::string str;
-
-    while (!pplex->isEof()) {
-      auto token = pplex->getToken();
-      str += getTokenText(token);
-      if (!pplex->isEof()) {
-        str += " ";
-      }
-    }
-
-    EXPECT_EQ(str, expandedText);
+  struct ExpectedDiagnostic {
+    DiagnosticLevel level;
+    std::string message;
   };
 
+  auto testMacro =
+      [this](std::string input, std::string expandedText,
+             std::vector<ExpectedDiagnostic> expectedDiagnostics = {}) {
+        setUpPreprocessor(input);
+
+        std::string str;
+
+        while (!pplex->isEof()) {
+          auto token = pplex->getToken();
+          str += getTokenText(token);
+          if (!pplex->isEof()) {
+            str += " ";
+          }
+        }
+
+        ASSERT_EQ(str, expandedText);
+
+        ASSERT_EQ(diag->collectedInfos.size(), expectedDiagnostics.size());
+
+        for (size_t i = 0; i < diag->collectedInfos.size(); i++) {
+          ASSERT_EQ(diag->collectedInfos[i].level,
+                    expectedDiagnostics[i].level);
+          ASSERT_EQ(diag->collectedInfos[i].message,
+                    expectedDiagnostics[i].message);
+        }
+      };
+
   testMacro(
-      "#define FOO FOO\r\n"
+      "#define FOO FOO \"hello\" ',' L\"world\" 123 123.456 int\r\n"
       "FOO",
-      "FOO");
+      "FOO \"hello\" ',' L\"world\" 123 123.456 int");
 
   testMacro(
       "#define FOO {BAR}\r\n"
@@ -655,6 +671,43 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
       "#define int double\r\n"
       "int foo()\r\n",
       "double foo ( )");
+
+  testMacro(
+      "#define foo A ## foo B\r\n"
+      "foo",
+      "Afoo B");
+
+  testMacro(
+      "#define foo A ## foo ## B\r\n"
+      "foo",
+      "AfooB");
+
+  testMacro(
+      "#define foo  \t\t\v\f   \\\n   \r\n"
+      "foo",
+      "");
+
+  testMacro(
+      "#define foo a ## ## b\r\n"
+      "foo",
+      "ab");
+
+  testMacro(
+      "#define double_hash # ## #\n"
+      "#define foo foo double_hash bar\r\n"
+      "foo",
+      "foo ## bar");
+
+  testMacro(
+      "#define foo a ## b ## { ## c ## d\r\n"
+      "foo",
+      "ab { cd",
+      {{DiagnosticLevel::Error,
+        "pasting \"ab\" and \"{\" does not produce a valid preprocessing "
+        "token"},
+       {DiagnosticLevel::Error,
+        "pasting \"{\" and \"c\" does not produce a valid preprocessing "
+        "token"}});
 }
 
 #undef NOT_FOLLOW_BY_MACRO_PARAMETER

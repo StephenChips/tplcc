@@ -1,5 +1,7 @@
 #include "preprocessing-lexer.h"
 
+#include <fmt/format.h>
+
 #include <cassert>
 #include <limits>
 #include <string>
@@ -1348,9 +1350,7 @@ std::string PreprocessingLexer::HashOperatorEvaluator::getNextTokenText(
 }
 
 std::string PreprocessingLexer::HashOperatorEvaluator::stringize(
-    ScanSection& section) {
-  std::string text = getNextTokenText(section);
-
+    const std::string& text) {
   // The input should have been checked, so we will find the argument for
   // sure.
   auto it = std::ranges::find(def.parameters, text);
@@ -1383,88 +1383,57 @@ bool PreprocessingLexer::HashOperatorEvaluator::isValidTokenText(
          section.offset == section.text.size();
 }
 
+/**
+ * The macro body processed by the function should be validated first, and
+ * should not be empty. All hash operators should be valid, meaning ## should be
+ * neither the first nor the last token, and every # should be followed by a
+ * macro parameter. The corresponding operands should consequently be available
+ * without error checks.
+ *
+ * TODO operator # is not implemented till function-like macro expansion is
+ * added.
+ */
 std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
-  enum class EvalState { AfterLHS, AfterDoubleHash, AfterRHS };
-
-  std::string result;
   ScanSection section{def.body, 0};
-  EvalState state = EvalState::AfterLHS;
-  std::string concatenatedText;
+  std::string result;
+  std::string concatenated;
 
   pplex.skipDirectiveSpacesAndComments(section);
 
   while (section.offset < section.text.size()) {
-    std::string previousText;
     std::string text = getNextTokenText(section);
-    EvalState nextState = state;
 
-    switch (state) {
-      case EvalState::AfterLHS:
-        if (text == "##") {
-          nextState = EvalState::AfterDoubleHash;
-          concatenatedText = previousText;
-          break;
-        }
+    if (text == "##") {
+      do {
+        pplex.skipDirectiveSpacesAndComments(section);
+        text = getNextTokenText(section);
+      } while (text == "##");
 
-        if (text == "#") {
-          pplex.skipDirectiveSpacesAndComments(section);
-          text += stringize(section);
-        }
+      std::string joined = concatenated + text;
+      if (isValidTokenText(joined)) {
+        concatenated = std::move(joined);
+        pplex.skipDirectiveSpacesAndComments(section);
+        continue;
+      }
 
-        result += text;
-        break;
-      case EvalState::AfterDoubleHash:
-        if (text == "##") {
-          break;
-        }
-
-        if (text == "#") {
-          pplex.skipDirectiveSpacesAndComments(section);
-          text += stringize(section);
-        }
-
-        // adding a stringized token to a concatenated text will
-        // definitely produces a invalid token.
-        concatenatedText += text;
-        if (isValidTokenText(concatenatedText)) {
-          nextState = EvalState::AfterRHS;
-        } else {
-          concatenatedText.clear();
-          nextState = EvalState::AfterLHS;
-        }
-      case EvalState::AfterRHS:
-        if (text == "##") {
-          nextState = EvalState::AfterDoubleHash;
-          concatenatedText += previousText;
-          break;
-        }
-
-        // `concatenatedText` is checked for its validity everytime a new
-        // text is joint, so there isn't need for recheck here.
-        result += concatenatedText;
-        nextState = EvalState::AfterLHS;
-
-        if (text == "#") {
-          pplex.skipDirectiveSpacesAndComments(section);
-          text += stringize(section);
-        }
-
-        result += text;
-        break;
+      pplex.diagnostics.report(
+          {DiagnosticLevel::Error,
+           {0, 0},
+           fmt::format("pasting \"{}\" and \"{}\" does not produce a valid "
+                       "preprocessing token",
+                       concatenated, text)});
     }
 
-    previousText = std::move(text);
+    if (!result.empty()) result += ' ';
+    result += concatenated;
+    concatenated = std::move(text);
 
-    size_t spaceStart = section.offset;
     pplex.skipDirectiveSpacesAndComments(section);
+  }
 
-    if (state != EvalState::AfterDoubleHash &&
-        nextState != EvalState::AfterDoubleHash &&
-        spaceStart < section.offset && section.offset < section.text.size()) {
-      result += ' ';
-    }
-
-    state = nextState;
+  if (!concatenated.empty()) {
+    if (!result.empty()) result += ' ';
+    result += concatenated;
   }
 
   return result;

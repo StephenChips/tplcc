@@ -432,7 +432,7 @@ class PreprocessingLexer {
 
     std::string getNextTokenText(ScanSection& section);
 
-    std::string stringize(ScanSection& section);
+    std::string stringize(const std::string& section);
 
     bool isValidTokenText(const std::string& text);
 
