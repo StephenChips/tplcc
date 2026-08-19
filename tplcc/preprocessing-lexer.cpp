@@ -1758,8 +1758,17 @@ Token PreprocessingLexer::getToken() {
       }
     }
 
-    if (auto identifier = std::get_if<Identifier>(&token)) {
-      if (auto macroDefIter = macroDefDict.find(identifier->name);
+    std::string* macroName;
+    if (auto ident = std::get_if<Identifier>(&token)) {
+      macroName = &ident->name;
+    } else if (auto kw = std::get_if<Keyword>(&token)) {
+      macroName = &kw->text;
+    } else {
+      macroName = nullptr;
+    }
+
+    if (macroName) {
+      if (auto macroDefIter = macroDefDict.find(*macroName);
           macroDefIter != macroDefDict.end()) {
         if (auto frameIter = std::find_if(
                 scanStack.begin(), scanStack.end(),

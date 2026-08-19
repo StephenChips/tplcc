@@ -26,7 +26,9 @@
     - [ ] Add more tests covering object-like macro expansion, including macro body with hash operators (for testing HashOperatorEvaluator)
     - [ ] Add implementation of expanding function-like macros, and some basic tests
     - [ ] Add more tests covering function-like macro expansion, including macro body with hash operators (for testing HashOperatorEvaluator)
--  [ ] Fix invalid UCN error recovery in the lexer
+- [ ] Fix invalid UCN error recovery in the lexer
+- [x] Fix macro not expanding when to name is a keyword
+    - Note: A few lines of code is added to `getToken()`. There is another function that is very similiar with `getToken()`: `scanPreprocessingTokenInsideDirectives()`, but it doesn't need to be changed. This is because it is used to validate macro bodies inside a `#define` directives, where macro names are returns like other identifiers and not expanded.
 
 ## parse `#define` directive 
 

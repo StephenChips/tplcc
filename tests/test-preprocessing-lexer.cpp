@@ -648,6 +648,11 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
       "#define \\u4f60\\U0000597D nihao\r\n"
       "你好\r\n",
       "nihao");
+
+  testMacro(
+      "#define int double\r\n"
+      "int foo()\r\n",
+      "double foo ( )");
 }
 
 #undef NOT_FOLLOW_BY_MACRO_PARAMETER
