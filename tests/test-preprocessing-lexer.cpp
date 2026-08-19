@@ -216,6 +216,7 @@ TEST_F(TestPreprocessingLexer, test_identifiers) {
   testIdentifier({"foo12", "foo12"});
   testIdentifier({"你好", "你好"});
   testIdentifier({"\\u4f60\\U0000597D", "你好"});
+  testIdentifier({"fo\\\no", "foo"});
 
   // test invalid identifers
 
@@ -505,22 +506,23 @@ TEST_F(TestPreprocessingLexer, test_integer_constants) {
 }
 
 TEST_F(TestPreprocessingLexer, test_string_literals) {
-  auto testStringLiteral = [&, this](StringLiteral expected) {
-    setUpPreprocessor(std::string(expected.text));
+  auto testStringLiteral = [&, this](std::string expected) {
+    setUpPreprocessor(expected);
 
     Token token = pplex->getToken();
     StringLiteral* actual = std::get_if<StringLiteral>(&token);
 
     if (actual) {
-      EXPECT_EQ(actual->isValid, expected.isValid);
-      EXPECT_EQ(actual->text, expected.text);
+      EXPECT_EQ(actual->isValid, true);
+      EXPECT_EQ(actual->text, expected);
     } else {
-      FAIL() << "expected a string literal " << expected.text << std::endl;
+      FAIL() << "expected a string literal " << expected << std::endl;
     }
   };
 
-  testStringLiteral({true, "\"a\""});
-  testStringLiteral({true, "\"你 😀\""});
+  testStringLiteral("\"a\"");
+  testStringLiteral("\"你 😀\"");
+  testStringLiteral("L\"hello\"");
 
   // TODO Add more tests on character escaping and error (diagnostic) output.
 }
