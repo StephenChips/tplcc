@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <cassert>
 #include <limits>
 #include <string>
@@ -141,8 +142,16 @@ bool PreprocessingLexer::pushFileFrame(std::string text) {
   return true;
 }
 
-bool PreprocessingLexer::pushMacroFrame(const MacroDef& def,
-                                        std::vector<std::string> arguments) {
+bool PreprocessingLexer::pushMacroFrame(
+    const MacroDef& def, std::vector<std::string_view> arguments = {}) {
+  size_t frameIndex;
+
+  if (auto frame = std::get_if<MacroArgumentFrame>(&scanStack.back())) {
+    frameIndex = frame->frameIndex;
+  } else {
+    frameIndex = scanStack.size() - 1;
+  }
+
   scanStack.emplace_back(MacroFrame{});
   auto& frame = std::get<MacroFrame>(scanStack.back());
 
@@ -151,6 +160,28 @@ bool PreprocessingLexer::pushMacroFrame(const MacroDef& def,
   frame.buffer =
       HashOperatorEvaluator(*this, *frame.def, frame.arguments).evaluate();
   frame.section = ScanSection{frame.buffer, 0};
+  frame.callerFrameIndex = frameIndex;
+
+  skipSpacesAndComments(frame);
+  if (frame.section.offset == frame.section.text.size()) {
+    scanStack.pop_back();
+    return false;
+  }
+
+  return true;
+}
+
+bool PreprocessingLexer::pushMacroArgumentFrame(size_t macroFrameIndex,
+                                                size_t argIndex) {
+  scanStack.emplace_back(MacroArgumentFrame{});
+  auto& frame = std::get<MacroArgumentFrame>(scanStack.back());
+
+  auto macroFrame = std::get_if<MacroFrame>(&scanStack[macroFrameIndex]);
+  assert(macroFrame != nullptr);
+  assert(argIndex < macroFrame->arguments.size());
+
+  frame.frameIndex = macroFrame->callerFrameIndex;
+  frame.section = ScanSection{macroFrame->arguments[argIndex], 0};
 
   skipSpacesAndComments(frame);
   if (frame.section.offset == frame.section.text.size()) {
@@ -1304,7 +1335,7 @@ bool PreprocessingLexer::validateHashOperator(const MacroDef& def) {
       }
 
       PreprocessingToken subsequentToken =
-          scanPreprocessingTokenInsideDreictive(section);
+          scanPreprocessingTokenInsideDreictive(copy);
 
       if (!std::holds_alternative<Identifier>(subsequentToken) &&
           !std::holds_alternative<Keyword>(subsequentToken)) {
@@ -1312,12 +1343,10 @@ bool PreprocessingLexer::validateHashOperator(const MacroDef& def) {
         return false;
       }
 
-      const std::string& text = getTokenText(subsequentToken);
+      std::string text = getTokenText(subsequentToken);
 
-      if (!std::ranges::all_of(def.parameters,
-                               [&](const std::string& parameter) {
-                                 return parameter == text;
-                               })) {
+      if (auto it = std::ranges::find(def.parameters, text);
+          it == def.parameters.end()) {
         REPORT_HASH_IS_NOT_FOLLOW_BY_A_MACRO_PARAMETER;
         return false;
       }
@@ -1328,7 +1357,7 @@ bool PreprocessingLexer::validateHashOperator(const MacroDef& def) {
     isFirstToken = false;
   }
 
-  std::string& text = getTokenText(token);
+  std::string text = getTokenText(token);
 
   if (text == "##") {
     diagnostics.report({DiagnosticLevel::Error,
@@ -1354,7 +1383,7 @@ std::string PreprocessingLexer::HashOperatorEvaluator::stringize(
   // The input should have been checked, so we will find the argument for
   // sure.
   auto it = std::ranges::find(def.parameters, text);
-  const std::string& arg = arguments[it - def.parameters.begin()];
+  const std::string_view& arg = arguments[it - def.parameters.begin()];
 
   std::string result{'"'};
   ScanSection argSection{std::string_view{arg}, 0};
@@ -1399,7 +1428,6 @@ std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
   std::string concatenated;
 
   pplex.skipDirectiveSpacesAndComments(section);
-
   while (section.offset < section.text.size()) {
     std::string text = getNextTokenText(section);
 
@@ -1408,6 +1436,20 @@ std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
         pplex.skipDirectiveSpacesAndComments(section);
         text = getNextTokenText(section);
       } while (text == "##");
+
+      if (def.kind == MacroKind::FunctionLikeMacro) {
+        if (text == "#") {
+          pplex.skipDirectiveSpacesAndComments(section);
+          std::string parameter = getNextTokenText(section);
+          auto it = std::ranges::find(def.parameters, parameter);
+          text = fmt::format("\"{}\"", *it);
+        } else if (auto it = std::ranges::find(def.parameters, text);
+                   it != def.parameters.end()) {
+                }
+      }
+
+      if (def.kind == MacroKind::FunctionLikeMacro && text == "#") {
+      }
 
       std::string joined = concatenated + text;
       if (isValidTokenText(joined)) {
@@ -1426,6 +1468,14 @@ std::string PreprocessingLexer::HashOperatorEvaluator::evaluate() {
 
     if (!result.empty()) result += ' ';
     result += concatenated;
+
+    if (def.kind == MacroKind::FunctionLikeMacro && text == "#") {
+      pplex.skipDirectiveSpacesAndComments(section);
+      std::string parameter = getNextTokenText(section);
+      size_t index =
+          std::ranges::find(def.parameters, parameter) - def.parameters.begin();
+      text = fmt::format("\"{}\"", arguments[index]);
+    }
     concatenated = std::move(text);
 
     pplex.skipDirectiveSpacesAndComments(section);
@@ -1581,10 +1631,6 @@ void PreprocessingLexer::scanDirective(ScanSection& section) {
       getChar(section);
     }
 
-    if (section.offset < section.text.size()) {
-      section.offset = endOffset;
-    }
-
     newDef.body = slice(section.text, startOfMacroBody, section.offset);
 
     if (validateHashOperator(newDef)) {
@@ -1599,6 +1645,27 @@ bool PreprocessingLexer::canScanDirective() {
   if (scanStack.empty()) return false;
   auto fileFrame = std::get_if<FileFrame>(&scanStack.back());
   return fileFrame && fileFrame->isAtLineStart;
+}
+
+bool PreprocessingLexer::isMacroPaintedBlue(const std::string& name) {
+  size_t frameIndex;
+
+  if (auto frame = std::get_if<MacroFrame>(&scanStack.back())) {
+    frameIndex = scanStack.size() - 1;
+  } else if (auto frame = std::get_if<MacroArgumentFrame>(&scanStack.back())) {
+    frameIndex = frame->frameIndex;
+  } else {
+    return false;
+  }
+
+  while (auto frame = std::get_if<MacroFrame>(&scanStack[frameIndex])) {
+    if (frame->def->name == name) {
+      return true;
+    }
+    frameIndex = frame->callerFrameIndex;
+  }
+
+  return false;
 }
 
 // PUBLIC FUNCTIONS
@@ -1727,28 +1794,52 @@ Token PreprocessingLexer::getToken() {
       }
     }
 
-    std::string* macroName;
+    std::string* str;
     if (auto ident = std::get_if<Identifier>(&token)) {
-      macroName = &ident->name;
+      str = &ident->name;
     } else if (auto kw = std::get_if<Keyword>(&token)) {
-      macroName = &kw->text;
+      // Since UCN cannot be ASCII characters, and all keywords are consist of
+      // only ASCII, there will be never a UCN inside the text.
+      str = &kw->text;
     } else {
-      macroName = nullptr;
+      str = nullptr;
     }
 
-    if (macroName) {
-      if (auto macroDefIter = macroDefDict.find(*macroName);
-          macroDefIter != macroDefDict.end()) {
-        if (auto frameIter = std::find_if(
-                scanStack.begin(), scanStack.end(),
-                [&](const ScanStackFrame& frame) {
-                  auto macroFrame = std::get_if<MacroFrame>(&frame);
-                  return macroFrame &&
-                         macroFrame->def->name == macroDefIter->second.name;
-                });
-            frameIter == scanStack.end()) {
-          pushMacroFrame(macroDefIter->second);
+    if (str) {
+      size_t frameIndex = scanStack.size() - 1;
+
+      if (auto maf = std::get_if<MacroArgumentFrame>(&scanStack[frameIndex])) {
+        frameIndex = maf->frameIndex;
+      }
+
+      if (auto frame = std::get_if<MacroFrame>(&scanStack[frameIndex])) {
+        auto& parameters = frame->def->parameters;
+        auto iter = std::ranges::find(parameters, *str);
+        if (iter != parameters.end()) {
+          size_t argIndex = iter - parameters.begin();
+          pushMacroArgumentFrame(frameIndex, argIndex);
           return getToken();
+        }
+      }
+
+      if (auto iter = macroDefDict.find(*str); iter != macroDefDict.end()) {
+        MacroDef& macroDef = iter->second;
+        if (!isMacroPaintedBlue(macroDef.name)) {
+          if (macroDef.kind == MacroKind::ObjectLikeMacro) {
+            pushMacroFrame(macroDef);
+            return getToken();
+          }
+
+          ScanSection probe = section;
+          skipSpacesAndComments(probe);
+          if (probe.offset < probe.text.size() && peekChar(probe) == '(') {
+            if (std::optional<std::vector<std::string_view>> arguments =
+                    scanFunctionLikeMacroArguments(probe, macroDef)) {
+              section.offset = probe.offset;
+              pushMacroFrame(macroDef, *arguments);
+              return getToken();
+            }
+          }
         }
       }
     }
@@ -1787,6 +1878,68 @@ Token PreprocessingLexer::getToken() {
   }
 
   return token;
+}
+
+std::optional<std::vector<std::string_view>>
+PreprocessingLexer::scanFunctionLikeMacroArguments(ScanSection& section,
+                                                   const MacroDef& def) {
+  assert(section.offset < section.text.size());
+  assert(section.text[section.offset] == '(');
+
+  size_t openParenthesisCount = 1;
+
+  section.offset++;
+  size_t startOffset = section.offset;
+  std::vector<std::string_view> arguments;
+
+  while (section.offset < section.text.size()) {
+    size_t endOffset;
+    char32_t ch = peekChar(section, &endOffset);
+    if (ch == '(') {
+      openParenthesisCount++;
+    } else if (ch == ')') {
+      openParenthesisCount--;
+    }
+
+    if (openParenthesisCount == 0) {
+      arguments.push_back(slice(section.text, startOffset, section.offset));
+      section.offset = endOffset;
+      break;
+    }
+
+    if (openParenthesisCount == 1 && ch == ',') {
+      arguments.push_back(slice(section.text, startOffset, section.offset));
+      section.offset = endOffset;
+      startOffset = section.offset;
+      continue;
+    }
+
+    section.offset = endOffset;
+  }
+
+  if (openParenthesisCount != 0) {
+    diagnostics.report(
+        {DiagnosticLevel::Error,
+         {0, 0},
+         fmt::format("unterminated argument list invoking macro \"{}\"",
+                     def.name)});
+    return std::nullopt;
+  }
+
+  if (arguments.size() > def.parameters.size()) {
+    diagnostics.report(
+        {DiagnosticLevel::Error,
+         {0, 0},
+         fmt::format("macro \"{}\" passed {} arguments, but takes just {}",
+                     def.name, arguments.size(), def.parameters.size())});
+    return std::nullopt;
+  }
+
+  while (arguments.size() < def.parameters.size()) {
+    arguments.emplace_back();
+  }
+
+  return arguments;
 }
 
 bool PreprocessingLexer::isEof() { return scanStack.empty(); }

@@ -627,8 +627,6 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
           }
         }
 
-        ASSERT_EQ(str, expandedText);
-
         ASSERT_EQ(diag->collectedInfos.size(), expectedDiagnostics.size());
 
         for (size_t i = 0; i < diag->collectedInfos.size(); i++) {
@@ -637,6 +635,8 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
           ASSERT_EQ(diag->collectedInfos[i].message,
                     expectedDiagnostics[i].message);
         }
+
+        ASSERT_EQ(str, expandedText);
       };
 
   testMacro(
@@ -668,14 +668,19 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
       "nihao");
 
   testMacro(
+      "#define foo  \t\t\v\f   \\\n   \r\n"
+      "foo",
+      "");
+
+  testMacro(
       "#define int double\r\n"
       "int foo()\r\n",
       "double foo ( )");
 
   testMacro(
-      "#define foo A ## foo B\r\n"
+      "#define foo A ## foo\r\n"
       "foo",
-      "Afoo B");
+      "Afoo");
 
   testMacro(
       "#define foo A ## foo ## B\r\n"
@@ -683,20 +688,78 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
       "AfooB");
 
   testMacro(
-      "#define foo  \t\t\v\f   \\\n   \r\n"
-      "foo",
-      "");
-
-  testMacro(
       "#define foo a ## ## b\r\n"
       "foo",
       "ab");
+
+  testMacro(
+      "#define foo(a) a ## a\r\n"
+      "foo()",
+      "");
+
+  testMacro(
+      "#define foo(a) a ## b\r\n"
+      "foo()",
+      "b");
+
+  testMacro(
+      "#define foo(a) b ## a\r\n"
+      "foo()",
+      "b");
+
+  testMacro(
+      "#define foo(a) a ## a\r\n"
+      "foo(hello world)",
+      "hello worldhello world");
+
+  testMacro(
+      "#define foo(a) hello ## a\r\n"
+      "#define bar(a) int a\r\n"
+      "foo(bar(ABC))",
+      "hellobar ( ABC )");
+
+  testMacro(
+      "#define foo(a) hello ## a\r\n"
+      "#define hellobar(a) int a\r\n"
+      "foo(bar(ABC))",
+      // hellobar(ABC) <- PRESCAN RESULT
+      "int ABC");
+
+  testMacro(
+      "#define foo(a) a ## a hello\r\n"
+      "#define bar(a) int a\r\n"
+      "foo(bar(ABC))",
+      // bar ( ABC ) bar ( ABC ) <- PRESCAN RESULT
+      "int ABC int Abc",  // <- RESCAN RESULT
+      {{DiagnosticLevel::Error,
+        "pasting \")\" and \"bar\" does not produce a valid preprocessing "
+        "token"}});
 
   testMacro(
       "#define double_hash # ## #\n"
       "#define foo foo double_hash bar\r\n"
       "foo",
       "foo ## bar");
+
+  testMacro(
+      "#define D(x) x + x\r\n"
+      "#define X(a) X##a\r\n"
+      "X(D(100))",
+      "XD(100)");
+
+  testMacro(
+      "#define D(x) x + x\r\n"
+      "#define X(a) a##X\r\n"
+      "X(D(100))\r\n",
+      "100 + 100 X",
+      {{DiagnosticLevel::Error,
+        "pasting \")\" and \"X\" does not produce a valid preprocessing "
+        "token"}});
+
+  testMacro(
+      "#define F(a, b, c) a ## b ## c\r\n"
+      "F(L, \"lol\" 123, .456)",
+      "L\"lol\" 123.456");
 
   testMacro(
       "#define foo a ## b ## { ## c ## d\r\n"
@@ -708,6 +771,231 @@ TEST_F(TestPreprocessingLexer, test_macro_expansion) {
        {DiagnosticLevel::Error,
         "pasting \"{\" and \"c\" does not produce a valid preprocessing "
         "token"}});
+
+  testMacro(
+      "#define foo # a\r\n"
+      "foo\r\n",
+      "# a");
+
+  testMacro(
+      "#define STR(a) #a\r\n"
+      "STR(      ) STR()\r\n",
+      "\"\" \"\"");
+
+  testMacro(
+      "#define STR(a) #a\r\n"
+      "STR(   hello      world  )\r\n",
+      "\"hello world\"");
+
+  testMacro(
+      "#define STR(a) #a\r\n"
+      "STR(hello . int \"\\\"a\" 33 33.44 'a' L'a' \\u00BA "
+      "\\U000000BA)\r\n",
+      "\"hello . int \\\"\\\\\\\"a\\\" 33 33.44 'a' L'a' \\u00BA "
+      "\\U000000BA");
+
+  /**
+   * Quote from C99 spec section 6.10.3.2:
+   *
+   * ... If the replacement that results is not a valid character string
+   * literal, the behavior is undefined.
+   *
+   * \q is not a valid escape sequence, in this implementation it is not
+   * changed.
+   */
+  testMacro(
+      "#define STR(a) #a\r\n"
+      "STR(\\q)\r\n",
+      "\"\\\\q\"");
+
+  testMacro(
+      "#define PREFIX_STR(prefix, str) prefix ## #str\n"
+      "PREFIX_STR(L, hello)\r\n",
+      "L\"hello\"");
+
+  testMacro(
+      "#define foo  a, b\r\n"
+      "#define bar(x) lose(x)\r\n"
+      "#define lose(x) (1 + (x))\r\n"
+      "bar(foo)\r\n",
+      "lose",
+      {{DiagnosticLevel::Error,
+        "macro \"lose\" passed 2 arguments, but takes just 1"}});
+
+  testMacro(
+      "#define foo a, b\r\n"
+      "#define bar(x, y) x + y\r\n"
+      "bar(foo)",
+      "bar",
+      {{DiagnosticLevel::Error,
+        "macro \"bar\" requires 2 arguments, but only 1 given"}});
+
+  /**
+   * C99 Section 6.10.3.1/1
+   *
+   * After the arguments for the invocation of a function-like macro have been
+   * identified, argument substitution takes place. A parameter in the
+   * replacement list, unless preceded by a # or ## preprocessing token or
+   * followed by a ## preprocessing token (see below), is replaced by the
+   * corresponding argument after all macros contained therein have been
+   * expanded. Before being substituted, each argument’s preprocessing tokens
+   * are completely macro replaced as if they formed the rest of the
+   * preprocessing file; no other preprocessing tokens are available.
+   */
+
+  /**
+   * It is tempting to adopt the function call process to function-like macro
+   * expansion, modeling each macro as a pure function that takes arguments
+   * consist of a list of preprocessing tokens and returns a new preprocessing
+   * token list. The arguments can be eagerly expanded, i.e., all macros therein
+   * are expanded before the macro expansion begins; or they can be lazily
+   * expanded, i.e., the argument is treversed and macros therein are expanded
+   * when a parameter name is encountered while scanning. However, neither eager
+   * or lazy expansion is correct. In fact, the function-call model isn't the
+   * right model for expanding macros.
+   *
+   * Eager expansion is not correct because macro arguments are not always
+   * expanded before substitution. It follows from the standard that, an
+   * argument corresponding to a parameter used with `#` and `##` operators
+   * is substituted without prior macro expansion.
+   *
+   * Following test case demostrates this behaviour:
+   */
+
+  testMacro(
+      "#define A 10\r\n"
+      "#define STR(a) #a\r\n"
+      "STR(A)\r\n",
+      "\"A\"");
+
+  /**
+   * Lazy expansion does not solve the problem, because the fundamental issue is
+   * how an argument participates in substitution. When a macro paramter is
+   * substituted, the proprocessing tokens of the argument are inserted into the
+   * replacement list, replacing the parameter. The formed token sequence may
+   * have different syntactic structure than the original macro body. For
+   * example, there can be new macro calls, different numbers of arguments, and
+   * even unterminated/preterminated argument list.
+   *
+   * Here are few examples:
+   */
+
+  testMacro(
+      "#define A(a) a\r\n"
+      "#define foo john, joe\r\n"
+      "#define B(a) A(a)\r\n"
+      "B(foo)",
+      // -> A(foo)              // substitute the argument of B
+      // -> A(john, joe)        // expand `foo`
+      // -> error               // A now has two arguments
+      "A",
+      {{DiagnosticLevel::Error,
+        "macro \"A\" passed 2 arguments, but takes only 1"}});
+
+  testMacro(
+      "#define A(a, b) a, b\r\n"
+      "#define foo john, joe\r\n"
+      "#define B(a) A(a)\r\n"
+      "B(foo)",
+      // -> A(foo)
+      // -> A(john, joe)
+      // -> john, joe
+      "john , joe");
+
+  testMacro(
+      "#define foo john, bar\r\n"
+      "#define bar joe, jane\r\n"
+      "#define A(x) B(x)\r\n"
+      "#define B(x, y, z) { x, y, z }\r\n"
+      "A(foo)\r\n",
+      // -> B(foo)
+      // -> B(john, joe, jane)
+      "{ john , joe , jane }");
+
+  testMacro(
+      "#define A(a) {a}\r\n"
+      "#define left_parenthesis (\r\n"
+      "#define B(a) A(a)\r\n"
+      "B(left_parenthesis)",
+      // -> B(()
+      "A",
+      {{DiagnosticLevel::Error,
+        "unterminated argument list invoking macro A"}});
+
+  testMacro(
+      "#define A(a) {a}\r\n"
+      "#define right_parenthesis )\r\n"
+      "#define B(a) A(a)\r\n"
+      "B(right_parenthesis)",
+      // -> B())
+      // -> A())
+      "{})");
+
+  /**
+   * Clearly in a normal function-call model, an argument has no ability to
+   * alter the structure of its macro body like this. The preprocessing tokens
+   * of an argument are isolated from those surrounding the paramter. No commas,
+   * parameters, or macro names inside an argument can interacts with the
+   * syntax of the macro body.
+   *
+   */
+
+  testMacro(
+      "#define AFTERX(x) X_ ## x\r\n"
+      "#define XAFTERX(x) AFTERX(x)\r\n"
+      "#define TABLESIZE 1024\r\n"
+      "#define BUFSIZE TABLESIZE\r\n"
+      "AFTERX(BUFSIZE) XAFTERX(BUFSIZE)\r\n",
+      "X_BUFSIZE X_1024");
+
+  testMacro(
+      "#define foo(a) a\r\n"
+      "foo(123)\r\n",
+      "123");
+
+  testMacro(
+      "#define foo(a) a\r\n"
+      "#define bar(a) foo(a)\r\n"
+      "bar(123)\r\n",
+      "123");
+
+  testMacro(
+      "#define foo(a) a\r\n"
+      "foo(foo(123))",
+      "123");
+
+  testMacro(
+      "#define F(x) x\r\n"
+      "#define A F(1)\r\n"
+      "F(A)",
+      "1");
+
+  testMacro(
+      "#define foo(a) a\r\n"
+      "#define bar(foo) foo(a)\r\n"
+      "bar(123)",
+      "123 ( a )");
+
+  /**
+   * C99 section 6.10.3.3/4
+   *
+   * If the expanded preprocessing token sequence from an argument contains
+   * # and ## punctuators, they are not regarded as hash operators.
+   */
+
+  testMacro(
+      "#define A(a) {a}\r\n"
+      "#define hash_hash # ## #\r\n"
+      "#define B(a) A(a)\r\n"
+      "B(apple hash_hash orange)",
+      "{ apple ## orange }");
+
+  testMacro(
+      "#define A(a) {a}\r\n"
+      "#define hash #\r\n"
+      "#define B(a) A(a)\r\n"
+      "B(hash_hash orange)",
+      "{ # orange }");
 }
 
 #undef NOT_FOLLOW_BY_MACRO_PARAMETER

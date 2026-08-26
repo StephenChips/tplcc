@@ -167,13 +167,70 @@ struct FileFrame {
 };
 
 struct MacroFrame {
-  const MacroDef* def;  // a pointer to the definition of the macro
-  std::vector<std::string> arguments;
-  // text after `#` and `##` evaluation.
-  // Maybe it should be a vector of tokens?
+  const MacroDef* def;
+
+  /**
+   * Index of frame in the scan stack where the macro is expanded.
+   *
+   * For example, if a macro `foo` is expanded under a source file `a.c`:
+   *
+   * ```c
+   * #define foo(a) a
+   *
+   * foo(123)
+   * ```
+   *
+   * When the preprocessor starts, a `FileFrame` is pushed to the stack as the
+   * first item, and its index is 0. Later when `MacroFrame` is created and
+   * pushed to the stack, this field is 0, referencing the `FileFrame` created
+   * beforehand, as the macro is expanded in the source file.
+   *
+   * However, if a macro is expanded inside another macro, this field will
+   * contain the index of that macro. For example, if the source file is:
+   *
+   * ```c
+   * #define foo(a) a
+   * #define bar(a) foo(a)
+   *
+   * bar(123)
+   * ```
+   *
+   * The macro `foo` is expanded as part of `bar`'s expansion. Therefore, this
+   * field is 1, while the field of `bar`'s frame has a value of 0, referencing
+   * the `FileFrame` for `a.c` that sits at the bottom of the stack.
+   */
+  size_t callerFrameIndex;
+
+  std::vector<std::string_view> arguments;
+
+  // The text after `#` and `##` evaluation.
   std::string buffer;
-  ScanSection section;  // the section.text is the buffer
+  ScanSection section;
 };
+
+struct MacroArgumentFrame {
+  /**
+   * Index of the frame whose code contains the argument.
+   *
+   * For example, if a `FileFrame` corresponding to following source code has an
+   * index of 0, meaning it is at the bottom of the scan stack, and a
+   * function-like macro `foo` is called within the code:
+   *
+   * ```a.c
+   * #define foo(a) #a
+   *
+   * foo(hello)
+   * ```
+   *
+   * When the preprocessor is going to scan the argument of `foo`, a
+   * `MacroArgumentFrame` is pushed to the stack, and this field has a value of
+   * 0, referencing the `FileFrame` at the bottom of the stack.
+   */
+  size_t frameIndex;
+  ScanSection section;
+};
+
+using ScanStackFrame = std::variant<FileFrame, MacroFrame, MacroArgumentFrame>;
 
 struct DecodeUTF8Result {
   char32_t codepoint;
@@ -285,8 +342,6 @@ struct EofToken {
   bool operator==(const EofToken&) const = default;
 };
 
-using ScanStackFrame = std::variant<FileFrame, MacroFrame>;
-
 using Token = std::variant<Keyword, Identifier, StringLiteral, FloatingConstant,
                            IntegerConstant, CharacterConstant, Punctuator,
                            InvalidToken, EofToken>;
@@ -311,7 +366,9 @@ class PreprocessingLexer {
   bool pushFileFrame(std::string text);
 
   bool pushMacroFrame(const MacroDef& def,
-                      std::vector<std::string> arguments = {});
+                      std::vector<std::string_view> arguments);
+
+  bool pushMacroArgumentFrame(size_t macroFrameIndex, size_t argIndex);
 
   std::optional<Punctuator> scanPunctuator(ScanSection& section);
 
@@ -354,8 +411,9 @@ class PreprocessingLexer {
 
   void skipDirectiveSpacesAndComments(ScanSection& section);
 
-  template <IsAlternativeOf<ScanStackFrame> T>
-  void skipSpacesAndComments(T& section);
+  template <typename T>
+  void skipSpacesAndComments(T& section)
+    requires IsAlternativeOf<T, ScanStackFrame> || std::same_as<T, ScanSection>;
 
   void skipSpacesAndComments(ScanStackFrame& frame) {
     std::visit([this](auto& frame) { skipSpacesAndComments(frame); }, frame);
@@ -427,7 +485,7 @@ class PreprocessingLexer {
   class HashOperatorEvaluator {
     PreprocessingLexer& pplex;
     const MacroDef& def;
-    const std::vector<std::string>& arguments;
+    const std::vector<std::string_view>& arguments;
     bool enableParseHeaderName = false;
 
     std::string getNextTokenText(ScanSection& section);
@@ -438,7 +496,7 @@ class PreprocessingLexer {
 
    public:
     HashOperatorEvaluator(PreprocessingLexer& pplex, const MacroDef& def,
-                          const std::vector<std::string>& argumement,
+                          const std::vector<std::string_view>& argumement,
                           bool enableParseHeaderName = false)
         : pplex(pplex),
           def(def),
@@ -450,7 +508,12 @@ class PreprocessingLexer {
 
   void scanDirective(ScanSection& section);
 
+  std::optional<std::vector<std::string_view>> scanFunctionLikeMacroArguments(
+      ScanSection& section, const MacroDef& def);
+
   bool canScanDirective();
+
+  bool isMacroPaintedBlue(const std::string& name);
 
  public:
   PreprocessingLexer(std::string input, Diagnostic& diagnostics)
@@ -465,16 +528,26 @@ class PreprocessingLexer {
   bool isEof();
 };
 
-template <IsAlternativeOf<ScanStackFrame> T>
-void PreprocessingLexer::skipSpacesAndComments(T& frame) {
-  ScanSection& section = frame.section;
+template <typename T>
+void PreprocessingLexer::skipSpacesAndComments(T& v)
+  requires IsAlternativeOf<T, ScanStackFrame> || std::same_as<T, ScanSection>
+{
+  auto getScanSection = [&](T& v) -> ScanSection& {
+    if constexpr (std::is_same_v<std::remove_cvref_t<T>, ScanSection>) {
+      return v;
+    } else {
+      return v.section;
+    }
+  };
+
+  ScanSection& section = getScanSection(v);
 
   size_t endOffset;
   while (section.offset < section.text.size()) {
     if (isMatchNewline(section, &endOffset)) {
       section.offset = endOffset;
-      if constexpr (std::is_same_v<T, FileFrame>) {
-        frame.isAtLineStart = true;
+      if constexpr (std::is_same_v<std::remove_cvref_t<T>, FileFrame>) {
+        v.isAtLineStart = true;
       }
     } else if (isMatchNonNewlineSpace(section, &endOffset)) {
       section.offset = endOffset;
